@@ -13,7 +13,6 @@ const N_ROBOTS: usize = 3;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (name, embedding, graph) = graph_collection::get(graph_collection::Collection::ThreeVerticesOfValencyThree);
 
-    
     // modify the embedding
     let (graph, modified_embedding) = {
         let cplx = UdnMorseCplx::new(&graph, N_ROBOTS, Some(1));
@@ -25,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pos = [6, 8, 12];
     let swapping = VecPermutation::from([1,2,0]);
     
-    // starting the timer for search algorithm
+    // starting the timer for the search algorithm
     let search_start = Instant::now();
    
     // compute the motion plan

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use alg::lin_alg::ConstVector;
+use topo_spaces::graph::{Graph, RawSimpleGraph};
 use topo_spaces::graph;
-use topo_spaces::graph::Graph;
 
 use std::f64::consts::PI;
 
@@ -188,5 +188,157 @@ pub fn get(c: Collection) -> (String, HashMap<String, ConstVector<f64, 2>>, Grap
             };
             ("ThreeVerticesOfValencyThree".to_string(), graph_embedding, graph)
         }
+    }
+}
+
+
+pub enum RawGraphCollection {
+    Grid,
+}
+
+impl RawGraphCollection {
+    pub fn get(self) -> (RawSimpleGraph, Vec<ConstVector<f64, 2>>, String) {
+        match self {
+            Self::Grid => {
+                let mut graph = RawSimpleGraph::new(145);
+                graph.is_maximal_tree_chosen = true;
+                for i in 0..17 {
+                    graph.add_edge(i, i+1);
+                }
+                let edges = (17..48)
+                    .filter(|i| ![27, 34, 41].contains(i) )
+                    .map(|i| [i, i+1])
+                    .chain([[24,28], [31,35], [38,42]].into_iter())
+                    .collect::<Vec<_>>();
+
+                for [i, j] in edges.into_iter().map(|[i,j]| [[i,j], [i+32, j+32], [i+32*2, j+32*2], [i+32*3, j+32*3]].into_iter() ).flatten() {
+                    graph.add_edge(i, j);
+                }
+
+                let sporadics = [
+                    [12, 27], [8,34], [4,41], [0,48],
+                    [20, 49], [24, 59], [31, 66], [38, 73], [45, 80], 
+                    [52, 81], [56, 91], [63, 98], [70, 105], [77, 112], 
+                    [84,113], [88,123], [95,130], [102,137], [109,144]
+                    
+                ];
+
+                for [i, j] in sporadics {
+                    graph.add_edge(i, j);
+                }
+
+                // create the embedding
+                let embedding = [
+                    /*   0 */ [ 0, 0],
+                    /*   1 */ [ 0, 1],
+                    /*   2 */ [ 0, 2],
+                    /*   3 */ [ 0, 3],
+                    /*   4 */ [ 0, 4],
+                    /*   5 */ [ 0, 5],
+                    /*   6 */ [ 0, 6],
+                    /*   7 */ [ 0, 7],
+                    /*   8 */ [ 0, 8],
+                    /*   9 */ [ 0, 9],
+                    /*  10 */ [ 0,10],
+                    /*  11 */ [ 0,11],
+                    /*  12 */ [ 0,12],
+                    /*  13 */ [ 0,13],
+                    /*  14 */ [ 0,14],
+                    /*  15 */ [ 0,15],
+                    /*  16 */ [ 0,16],
+
+                    /*  17 */ [ 1,16],
+                    /*  18 */ [ 2,16],
+                    /*  19 */ [ 3,16],
+                    /*  20 */ [ 4,16],
+
+                    /*  21 */ [ 4,15],
+                    /*  22 */ [ 4,14],
+                    /*  23 */ [ 4,13],
+                    /*  24 */ [ 4,12],
+                    /*  25 */ [ 3,12],
+                    /*  26 */ [ 2,12],
+                    /*  27 */ [ 1,12],
+                    /*  28 */ [ 4,11],
+                    /*  29 */ [ 4,10],
+                    /*  30 */ [ 4, 9],
+                    /*  31 */ [ 4, 8],
+                    /*  32 */ [ 3, 8],
+                    /*  33 */ [ 2, 8],
+                    /*  34 */ [ 1, 8],
+                    /*  35 */ [ 4, 7],
+                    /*  36 */ [ 4, 6],
+                    /*  37 */ [ 4, 5],
+                    /*  38 */ [ 4, 4],
+                    /*  39 */ [ 3, 4],
+                    /*  40 */ [ 2, 4],
+                    /*  41 */ [ 1, 4],
+                    /*  42 */ [ 4, 3],
+                    /*  43 */ [ 4, 2],
+                    /*  44 */ [ 4, 1],
+                    /*  45 */ [ 4, 0],
+                    /*  46 */ [ 3, 0],
+                    /*  47 */ [ 2, 0],
+                    /*  48 */ [ 1, 0]
+                ];
+
+                let mut embedding = embedding.into_iter()
+                    .map(|[x, y]| ConstVector::from([x as f64, y as f64]) / 8.0 - ConstVector::from([1.0, 1.0]) )
+                    .collect::<Vec<_>>();
+
+                for i in 1..=3 {
+                    let translation = ConstVector::from([0.5, 0.0]);
+                    for j in 17..49 {
+                        let p = embedding[j];
+                        embedding.push( p + translation * i as f64 );
+                    }
+                }
+
+                (graph, embedding, "MANUALLY_MADE_GRID".to_string())
+            }
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::RawGraphCollection;
+    use plotters::prelude::*;
+
+    #[test]
+    fn raw_graph_grid_test() -> Result<(), Box<dyn std::error::Error>> {
+        let (graph, embedding, _) = RawGraphCollection::Grid.get();
+
+        // ------------------ Drawing ------------------------- 
+        let root = BitMapBackend::new("program_outputs/GRID_TEST.jpg", (600, 600)).into_drawing_area();
+        root.fill(&WHITE)?;
+        let mut graphic = ChartBuilder::on(&root)
+            .caption("GRID", ("san-serif", 40))
+            .build_cartesian_2d(-1.1..1.1, -1.1..1.1)?;
+
+        // draw vertices
+        graphic.draw_series( 
+            graph.vertex_iter()
+                .map(|v| {
+                    let p = embedding[v.vertex()];
+                    Circle::new( (p[0], p[1]), 4, BLACK.filled())
+                }
+        ))?;
+
+        // draw edges
+        for edge in graph.edge_iter() {
+            graphic.draw_series(LineSeries::new(
+                edge.edge().into_iter().map(|i| {
+                    let p = embedding[i];
+                    (p[0], p[1])
+                }),
+                BLACK.filled().stroke_width(2)
+            ))?;
+        }
+
+        root.present()?;
+
+        Ok(())
     }
 }

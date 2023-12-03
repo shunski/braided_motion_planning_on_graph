@@ -1,13 +1,14 @@
-use topo_spaces::cubical::{Cube, EdgePath, UdnMorseCplx};
-use topo_spaces::graph::{CubeFactor, SimpleVertex, SimpleGraph};
+use topo_spaces::cubical::{self, Cube, UdnMorseCplx};
+use topo_spaces::graph::{CubeFactor, SimpleVertex, SimpleGraph, RawSimpleGraph};
 use alg::lin_alg::ConstVector;
+use crate::CubicPath;
 
 use std::collections::HashMap;
 
 use plotters::prelude::*;
 
 const EDGE_PATH_ANIMATION_RESOLUTION: usize = 10;
-const FLAME_DELAY: u32 = 10;
+const FLAME_DELAY: u32 = 5;
 
 struct PathRenderer<'a, const N: usize> {
     iter: std::slice::Iter<'a, Vec<[usize; 2]>>,
@@ -127,7 +128,7 @@ impl<'a, const N: usize> Iterator for PathRenderer<'a, N> {
 }
 
 
-pub fn draw_paths<const N: usize>(edge_paths: &[EdgePath], embedding: &HashMap<SimpleVertex, ConstVector<f64, 2>>, cplx: &UdnMorseCplx, graph_name: &str, bin_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn draw_paths<const N: usize>(edge_paths: &[cubical::EdgePath], embedding: &HashMap<SimpleVertex, ConstVector<f64, 2>>, cplx: &UdnMorseCplx, graph_name: &str, bin_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut path_renderers: Vec<_> = edge_paths.iter()
         .map(|p| PathRenderer::<N>::new(
             p, 
@@ -217,7 +218,7 @@ pub fn draw_paths<const N: usize>(edge_paths: &[EdgePath], embedding: &HashMap<S
 }
 
 
-pub fn draw_path_with_endpoints<const N: usize>(path: &EdgePath, start: &[usize], end: &[usize], embedding: &HashMap<SimpleVertex, ConstVector<f64, 2>>, graph: &SimpleGraph, graph_name: &str, bin_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn draw_path_with_endpoints<const N: usize>(path: &cubical::EdgePath, start: &[usize], end: &[usize], embedding: &HashMap<SimpleVertex, ConstVector<f64, 2>>, graph: &SimpleGraph, graph_name: &str, bin_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut path_renderer = PathRenderer::<N>::new(
             path, 
             Some( start ),
@@ -298,6 +299,136 @@ pub fn draw_path_with_endpoints<const N: usize>(path: &EdgePath, start: &[usize]
         }
 
         vis_root.present()?;
+    }
+
+    for _ in 0..5 {
+        vis_root.present()?;
+    }
+
+    Ok(())
+}
+
+pub fn draw_edge_path<const N: usize>(path: &CubicPath<N>, bin_name: &str, graph_name: &str, embedding: &[ConstVector<f64, 2>], graph: &RawSimpleGraph) -> Result<(), Box<dyn std::error::Error>> {
+    // setting up the visualization tools
+    let vis_root = BitMapBackend::gif(
+        &format!("program_outputs/{bin_name}==={graph_name}==={N}_points.gif"), 
+        (900, 300), 
+        FLAME_DELAY
+    )?.into_drawing_area();
+
+    vis_root.fill(&WHITE)?;
+
+    let start = {
+        let mut start = [0; N];
+        path.first().unwrap().iter().zip(start.iter_mut()).for_each(|([initial,_], start_mut)| *start_mut = *initial );
+        start
+    };
+    let end = {
+        let mut end = start;
+        path.act_on(&mut end);
+        end
+    };
+
+    let mut pos = start;
+    
+    let panels = vis_root.split_evenly((1, 3));
+
+    for (panel, pos) in panels.iter().zip([start, pos, end]) {
+        let mut graphic = ChartBuilder::on(&panel)
+            .margin(1)
+            .build_cartesian_2d(-1.1..1.1, -1.1..1.1 )?;
+
+        graphic.draw_series( 
+            embedding.iter()
+                .map(|p| Circle::new( 
+                (p[0], p[1]), 
+                2,
+                BLACK.filled()
+                )) 
+        )?;
+
+        // drawing edges
+        for e in graph.edge_iter()
+            .map(|c| {
+                let [i, j] = c.edge();
+                let (x, y) = (embedding[i], embedding[j]);
+                [(x[0], x[1]), (y[0], y[1])]
+            })
+        {
+            graphic.draw_series( LineSeries::new( 
+                e.into_iter(), 
+                BLACK.stroke_width(3)
+            ))?;
+        }
+
+        // drawing robots
+        graphic.draw_series(
+            pos.iter().enumerate().map(|(i, &p)| Circle::new( 
+                (embedding[p][0], embedding[p][1]), 
+                5,
+                VulcanoHSL::get_color(i as f64 / {N-1} as f64).filled()
+            ))
+        )?;
+        graphic.draw_series(
+            pos.iter().map(|&p| Circle::new( 
+                (embedding[p][0], embedding[p][1]), 
+                5,
+                BLACK
+            ))
+        )?;
+    }
+
+    vis_root.present()?;
+
+    for motion in path.iter() {
+        panels[1].fill(&WHITE)?;
+
+        motion.act_on(&mut pos);
+
+        let mut graphic = ChartBuilder::on(&panels[1])
+        .margin(1)
+        .build_cartesian_2d(-1.1..1.1, -1.1..1.1 )?;
+
+        graphic.draw_series( 
+            embedding.iter()
+                .map(|p| Circle::new( 
+                (p[0], p[1]), 
+                2,
+                BLACK.filled()
+                )) 
+        )?;
+
+        // drawing edges
+        for e in graph.edge_iter()
+            .map(|c| {
+                let [i, j] = c.edge();
+                let (x, y) = (embedding[i], embedding[j]);
+                [(x[0], x[1]), (y[0], y[1])]
+            })
+        {
+            graphic.draw_series( LineSeries::new( 
+                e.into_iter(), 
+                BLACK.stroke_width(3)
+            ))?;
+        }
+
+        // drawing robots
+        graphic.draw_series(
+            pos.iter().enumerate().map(|(i, &p)| Circle::new( 
+                (embedding[p][0], embedding[p][1]), 
+                5,
+                VulcanoHSL::get_color(i as f64 / {N-1} as f64).filled()
+            ))
+        )?;
+        graphic.draw_series(
+            pos.iter().map(|&p| Circle::new( 
+                (embedding[p][0], embedding[p][1]), 
+                5,
+                BLACK
+            ))
+        )?;
+
+        vis_root.present()?
     }
 
     for _ in 0..5 {

@@ -26,7 +26,8 @@ impl<const N: usize> UcsHandle<N> {
     
     pub fn search(mut self, goal: ConstPermutation<N>) -> EdgePath {
         let mut curr_node = Node{permutation: ConstPermutation::identity(), path: EdgePath::trivial_path()};
-        while curr_node.permutation != goal { // || curr_node.path.len() > 12 {
+        while curr_node.permutation != goal { 
+            // || curr_node.path.len() > 12 {
             // println!("search loop");
             
             // if 'curr_node' is not a path, then compute the cost for each edge (i.e. length of geodesics)
@@ -79,9 +80,11 @@ pub fn dynamic_search_on_tree(graph: &RawSimpleGraph, swapping: VecPermutation, 
     // find the first essential vertex
     let first_essential_vertex = (0..).find(|&i| graph.degree_of(i) > 2).unwrap();
 
-    // let initial vertex
+    // create the base vertex
     let base_vertex = (0..start_pos.len()).map(|i| swapping.eval(i)).collect::<Vec<_>>();
     println!("base vertex = {base_vertex:?}");
+
+    // run the main recursive algorithm
     let cells = dynamic_search_on_tree_recc(graph, &base_vertex, first_essential_vertex, start_pos);
 
     println!("critical cells: {cells:?}");
@@ -163,6 +166,12 @@ fn dynamic_search_on_tree_recc(graph: &RawSimpleGraph, points: &[usize], essenti
             .chain( change_of_basis_inverse.into_iter() )
             .collect::<Vec<_>>();
         paths_from_branches.append( &mut path );
+    }
+
+    // do the necessary swapping for the returning points and traveling points.
+    // these points have indces >= "first_returning_idx"
+    for n in swapping_orders {
+        
     }
 
     // get the ordering in the current vertex
@@ -406,4 +415,9 @@ mod dynamic_search_test {
 
         assert_eq!(ans, motions);
     }
+}
+
+
+pub fn dynamic_search_on_tree2(points: &[usize], ) {
+    
 }
