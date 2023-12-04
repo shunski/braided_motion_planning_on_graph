@@ -114,6 +114,33 @@ impl<const N: usize> ElementaryCubicPath<N> {
 
         Self(out)
     }
+
+
+    // This function takes two 'ElementaryCubicPath' by reference and returns a composition if the two paths are composable enclosed in Ok().
+    // Otherwise, it will return 'Err(())'.
+    // The returned path might be an identity path.
+    pub fn composed_with(&self, other: &Self) -> Result<Self, ()> {
+        let mut out = self.0;
+
+        for out_handle in &mut out {
+            // Check whether or not the path is composable at the point.
+            // We can use the binary search because the array is ordered by the start of the path
+            let idx = if let Ok(idx) = other.binary_search_by_key( &out_handle[1], |[a,_]| *a ) {
+                idx
+            } else {
+                return Err(())
+            };
+
+            // compute the composition
+            *out_handle = other[idx];
+        }
+
+        Ok(Self(out))
+    }
+
+    fn is_identity(&self) -> bool {
+        self.iter().all(|[x,y]| x==y )
+    }
 }
 
 impl<const N: usize> std::convert::From<[[usize;2]; N]> for ElementaryCubicPath<N> {
@@ -133,11 +160,84 @@ impl<const N: usize> Deref for CubicPath<N> {
     }
 }
 
+impl<const N: usize> DerefMut for CubicPath<N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl<const N: usize> CubicPath<N> {
     pub fn act_on(&self, p: &mut [usize; N]) {
         for e in self.iter() {
             e.act_on(p);
         }
+    }
+
+    pub fn composed_with(mut self, mut other: Self) -> Self {
+        self.append(&mut other);
+        self.reduce_to_geodesic()
+    }
+
+    pub fn reduce_to_geodesic(self) -> Self {
+        // do the path reduction untill the path cannnot be reduced anymore.
+        let mut path_length = self.len();
+        let mut path = self.reduce();
+
+        while path_length != path.len() {
+            path_length = path.len();
+            path = self.reduce();
+        }
+        path
+    }
+
+    pub fn reduce(self) -> Self {
+        if self.is_empty() {return self};
+
+        let mut reduced_path = vec![self[0]];
+        reduced_path.reserve( self.len() );
+        
+        for f in self.into_iter().skip(1) {
+            if reduced_path.is_empty() {
+                reduced_path.push( f );
+                continue;
+            }
+
+            // if 'reduced_path' is nonempty, then 'reduced_path' compute the composition at the end of 'reduced_path'.
+            if let Ok(h) = reduced_path.last().unwrap().composed_with( &f ) {
+                if h.is_identity() {
+                    reduced_path.pop();
+                } else {
+                    *reduced_path.last_mut().unwrap() = h;
+                }
+            } else {
+                // if 'f' cannot be composed with the last element, then simply push 'f' at the end.
+                reduced_path.push( f );
+            };
+        }
+
+        Self( reduced_path )
+    }
+
+    fn reduce_to_geodesic_(self) -> Self {
+        let mut out = Vec::new();
+
+        for f in self.0 {
+            if out.is_empty() {
+                out.push( f );
+                continue;
+            }
+
+            for edge_handle in f.0.iter_mut().filter(|[x,y]| x!=y ) {
+                // check if the edge motion can be brought to front or not.
+                
+            }
+        }
+
+        out
+    }
+
+    pub fn inverse() -> Self {
+        s
     }
 }
 
