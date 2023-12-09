@@ -17,9 +17,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let cube2 = MorseCube::<N, 1>{
-        cube: [[70,105]],
+        cube: [[105,70]],
         n_points_stacked_at_basepoint: 2,
-        n_points_stacked_at_cube: [[vec![1,1],vec![]]],
+        n_points_stacked_at_cube: [[vec![],vec![1,1]]],
     };
 
     let path1 = cube1.get_edge_path(&graph);
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // draw the generated paths
     println!("drawing paths...");
-    graphics::draw_edge_path::<N>(&composition, &"test", &name, &embedding, &graph)?;
+    graphics::draw_edge_path::<N>(&composition, &"composittion_test", &name, &embedding, &graph)?;
 
     Ok(())
 }

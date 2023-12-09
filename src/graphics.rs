@@ -318,16 +318,9 @@ pub fn draw_edge_path<const N: usize>(path: &CubicPath<N>, bin_name: &str, graph
 
     vis_root.fill(&WHITE)?;
 
-    let start = {
-        let mut start = [0; N];
-        path.first().unwrap().iter().zip(start.iter_mut()).for_each(|([initial,_], start_mut)| *start_mut = *initial );
-        start
-    };
-    let end = {
-        let mut end = start;
-        path.act_on(&mut end);
-        end
-    };
+    let start = path.start;
+
+    let end = path.end;
 
     let mut pos = start;
     

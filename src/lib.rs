@@ -62,7 +62,6 @@ impl<const N: usize> ElementaryCubicPath<N> {
     }
 
     pub fn act_on(&self, p: &mut [usize; N]) {
-        println!("HELLO");
         // 'p' must be an array of (unsorted) distinct points
         debug_assert!({
             let mut q = p.clone();
@@ -72,7 +71,8 @@ impl<const N: usize> ElementaryCubicPath<N> {
 
         // in order for 'self' to be able to act on 'p', start of 'self' must be contained in 'p'
         debug_assert!(
-            self.iter().all(|[s,_]| p.iter().any(|x| s==x ) )
+            self.iter().all(|[s,_]| p.iter().any(|x| s==x ) ),
+            "self={self:?}, p={p:?}"
         );
 
         // send each vertex to the goal
@@ -139,7 +139,7 @@ impl<const N: usize> ElementaryCubicPath<N> {
         let points_at_end = &c.n_points_stacked_at_cube[0][1];
         graph.adjacent_vertices_iter( end_idx )
             .skip_while(|&w| w < end_idx )
-            .filter(|&w| graph.maximal_tree_contains([start_idx, w]))
+            .filter(|&w| graph.maximal_tree_contains([end_idx, w]))
             .zip( points_at_end.iter() )
             .for_each(|(w, &n_stacked_at_v)| {
                 (0..n_stacked_at_v).for_each(|i| *start_handle.next().unwrap() = w+i );
@@ -220,25 +220,31 @@ impl<const N: usize> ElementaryCubicPath<N> {
 
 
 #[derive(Clone)]
-pub struct CubicPath<const N: usize> (Vec<ElementaryCubicPath<N>>);
+pub struct CubicPath<const N: usize> {
+    path: Vec<ElementaryCubicPath<N>>,
+    start: [usize; N],
+    end: [usize; N],
+}
 
 impl<const N: usize> Deref for CubicPath<N> {
     type Target = Vec<ElementaryCubicPath<N>>;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.path
     }
 }
 
 impl<const N: usize> DerefMut for CubicPath<N> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.path
     }
 }
 
 impl<const N: usize> Debug for CubicPath<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for p in self.0.iter() {
-            write!(f, "{p:?}\n")?
+        write!(f, "start = {:?}\n", self.start)?;
+        write!(f, "end = {:?}\n", self.end)?;
+        for p in self.iter() {
+            write!(f, "{p:?}\n")?;
         }
         write!(f, "")
     }
@@ -253,6 +259,10 @@ impl<const N: usize> CubicPath<N> {
 
     pub fn composed_with(mut self, mut other: Self) -> Self {
         self.append(&mut other);
+
+        let mut end = self.start;
+        self.act_on(&mut end);
+        self.end = end;
         self.reduce_to_geodesic()
         // self
     }
@@ -349,10 +359,10 @@ impl<const N: usize> CubicPath<N> {
         //         out.push(f)
         //     }
         // }
-
+        let (start, end) = (self.start, self.end);
         let mut out = Vec::new();
 
-        for f in self.0 {
+        for f in self.path {
             if out.is_empty() {
                 out.push(f);
                 continue;
@@ -390,7 +400,11 @@ impl<const N: usize> CubicPath<N> {
 
         }
 
-        Self( out )
+        Self{
+            path: out,
+            start,
+            end
+        }
     }
 }
 
@@ -433,17 +447,19 @@ impl<const N: usize> MorseCube<N, 1> {
         let mut path = VecDeque::from([critical_motion]);
         // panic!("start={start:?}");
         // panic!("end={end:?}");
-        Self::get_edge_path_recc::<false>(start, &mut path, graph);
-        Self::get_edge_path_recc::<true>(end, &mut path, graph);
+        let start = Self::get_edge_path_recc::<false>(start, &mut path, graph);
+        let end = Self::get_edge_path_recc::<true>(end, &mut path, graph);
 
-        let path = CubicPath(
-            path.into()
-        );
+        let path = CubicPath{
+            path: path.into(),
+            start,
+            end
+        };
 
         path
     }
 
-    fn get_edge_path_recc<const FORWARD: bool>(points: [usize; N], path: &mut VecDeque<ElementaryCubicPath<N>>, graph: &RawSimpleGraph) {
+    fn get_edge_path_recc<const FORWARD: bool>(points: [usize; N], path: &mut VecDeque<ElementaryCubicPath<N>>, graph: &RawSimpleGraph) -> [usize; N] {
         // points must be ordered, because we will use the binary search on it.
         debug_assert!(
             points.into_iter().zip(points.into_iter().skip(1)).all(|(p, q)| p < q ),
@@ -453,7 +469,7 @@ impl<const N: usize> MorseCube<N, 1> {
 
         // base case
         if points.iter().enumerate().all(|(i, &x)| i==x ) {
-            return;
+            return points;
         }
 
         let (cubic_path, size, next_points) = {
@@ -534,8 +550,6 @@ fn get_a_path_on_maximal_tree_recc<const N: usize>(start: &[usize;N], goal: &[us
     // collect points below the essential vertex
     let points_start_here = (0..=essential_vertex).rev().filter(|w| graph.degree_of(*w)==2 ).filter(|w| start.binary_search(w).is_ok() ).collect::<Vec<_>>();
     let points_goal_here = (0..=essential_vertex).rev().filter(|w| graph.degree_of(*w)==2 ).filter(|w| goal.binary_search(w).is_ok() ).collect::<Vec<_>>();
-
-    
 
     out
 }
