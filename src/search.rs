@@ -5,6 +5,8 @@ use alg::non_commutative::permutation::{ConstPermutation, VecPermutation};
 use alg::non_commutative::Group;
 use topo_spaces::graph::{CubeFactor, RawSimpleGraph};
 
+use crate::{MorsePath, MorseCube};
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct Node<const N: usize> {
     permutation: ConstPermutation<N>,
@@ -329,16 +331,21 @@ fn swap_at_current_vertex(mut points: Vec<usize>, essential_vertex: usize, next_
 
 fn get_next_essential_vertices(essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<usize> {
     let mut out = Vec::new();
-    for mut v in graph.adjacent_vertices_iter(essential_vertex) {
+    for mut v in graph.adjacent_vertices_iter(essential_vertex).skip(1) {
         while graph.degree_of(v) == 2 {
             v += 1;
         }
-        if graph.degree_of(v) == 1 { continue; }
-        if essential_vertex == v { continue; }
 
         out.push(v);
     }
     out
+}
+
+fn get_next_vertices(essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<usize> {
+    graph.adjacent_vertices_iter(essential_vertex)
+        .skip(1)
+        .filter(|&v| graph.maximal_tree_contains( [essential_vertex, v] ))
+        .collect::<Vec<_>>()
 }
 
 fn branch_index_of(v: usize, next_vertices: &[usize]) -> usize {
@@ -418,6 +425,122 @@ mod dynamic_search_test {
 }
 
 
-pub fn dynamic_search_on_tree2(points: &[usize], ) {
+pub fn path_in_tree<const N: usize>(points: [[usize; 2]; N], graph: &RawSimpleGraph) -> MorsePath<N> {
+    let graph_ = GraphInformation::from(graph);
+
+
+}
+
+pub fn path_at_dyn<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
+    // 'essential vertex' has to an essential vertex
+    debug_assert!(
+        graph.degree_in_maximal_tree(essential_vertex) > 2,
+        "essential_vertex={essential_vertex} is not an essential vertex."
+    );
+    // 'points' must be sorted by the order of starting points.
+    debug_assert!(
+        points.iter().map(|x|x[0]).zip(points.iter().map(|x|x[0]).skip(1)).all(|(x,y)| x < y),
+        "'start' is not sorted."
+    );
+
+
+    // 'points_swapped_here' is the start points below the essential vertex but above the previous essential vertex.
+    let prev_essential_vertex = (0..essential_vertex).rev().take_while(|&v| graph.degree_in_maximal_tree(v) <= 2).last().unwrap();
+    let mut points_swapped_here = points.iter()
+        .skip_while(|&&[s, _]| s <= prev_essential_vertex )
+        .take_while(|&&[s, _]| s <= essential_vertex)
+        .copied()
+        .collect::<Vec<_>>();
+
+    let mut stacked_points = vec![0; graph.next_vertices[essential_vertex].len()];
+
+    for (v,w) in graph.next_vertices[essential_vertex].iter()
+        .zip( graph.next_essential_vertices[essential_vertex].iter() )
+        .filter( |(_, w)| graph.degree_in_maximal_tree(**w)==1 ) 
+    {
+        for [s, g] in points {
+            if v <= s && s <= w {
+                points_swapped_here.push( [*s, *g] );
+            } else {
+                let idx = graph.next_vertices[essential_vertex]
+                    .iter()
+                    .take_while(|t| s<t )
+                    .enumerate()
+                    .last().unwrap().0; // Todo: Change this to binary search
+                
+
+                stacked_points[idx] += 1;
+            }
+        } 
+    }
+
+    let swapping_at_this_vertex = swap_at(essential_vertex, &mut points_swapped_here, &stacked_points, graph);
+}
+
+fn swap_at<const N: usize>(essential_vertex: usize, points_swapped_here: &mut [[usize;2]], stacked_points: &[usize], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
+    let n_branch = stacked_points.len();
+    let mut swappings = Vec::new();
+
+    let mut evacuation_branch = false;
     
+
+    swappings
+}
+
+struct UsizeIndexable<T>(Vec<(usize, T)>);
+
+impl<T> std::ops::Index<usize> for UsizeIndexable<T> {
+    type Output = T;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[self.0.binary_search_by_key(&index, |&(i,_)| i ).unwrap()].1
+    }
+}
+
+struct GraphInformation<'a> {
+    pub graph_ref: &'a RawSimpleGraph,
+    pub next_essential_vertices: UsizeIndexable<Vec<usize>>,
+    pub next_vertices: UsizeIndexable<Vec<usize>>,
+    pub essential_vertices: Vec<usize>, // vertices of degree not equal to 2 in maximal tree
+}
+
+impl<'a> std::ops::Deref for GraphInformation<'a> {
+    type Target = RawSimpleGraph;
+    fn deref(&self) -> &Self::Target {
+        &self.graph_ref
+    }
+}
+
+impl<'a> GraphInformation<'a> {
+    pub fn from(graph_ref: &'a RawSimpleGraph) -> Self {
+        Self {
+            graph_ref,
+            next_essential_vertices: Self::get_next_essential_vertices_dictionary(graph_ref),
+            next_vertices: Self::get_next_vertices_dictionary(graph_ref),
+            essential_vertices: Self::get_essential_vertices(graph_ref),
+        }
+    }
+
+    fn get_next_essential_vertices_dictionary(graph: &RawSimpleGraph) -> Vec<(usize, Vec<usize>)> {
+        graph.vertex_iter()
+            .map(|v| v.vertex() )
+            .filter(|v| graph.degree_in_maximal_tree(*v) != 2 )
+            .map(|v| (v, get_next_essential_vertices(v, graph)))
+            .collect::<Vec<_>>()
+    }
+    
+    
+    fn get_next_vertices_dictionary(graph: &RawSimpleGraph) -> Vec<(usize, Vec<usize>)> {
+        graph.vertex_iter()
+            .map(|v| v.vertex() )
+            .filter(|v| graph.degree_in_maximal_tree(*v) != 2 )
+            .map(|v| (v, get_next_vertices(v, graph)))
+            .collect::<Vec<_>>()
+    }
+    
+    fn get_essential_vertices(graph: &RawSimpleGraph) -> Vec<usize> {
+        graph.vertex_iter()
+        .map(|v| v.vertex() )
+        .filter(|v| graph.degree_in_maximal_tree(*v) != 2 )
+        .collect::<Vec<_>>()
+    }
 }

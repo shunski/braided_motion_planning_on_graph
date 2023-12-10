@@ -373,6 +373,10 @@ pub fn draw_edge_path<const N: usize>(path: &CubicPath<N>, bin_name: &str, graph
 
     vis_root.present()?;
 
+    for _ in 0..10 {
+        vis_root.present()?;
+    }
+
     for motion in path.iter() {
         panels[1].fill(&WHITE)?;
 
@@ -424,7 +428,7 @@ pub fn draw_edge_path<const N: usize>(path: &CubicPath<N>, bin_name: &str, graph
         vis_root.present()?
     }
 
-    for _ in 0..5 {
+    for _ in 0..10 {
         vis_root.present()?;
     }
 

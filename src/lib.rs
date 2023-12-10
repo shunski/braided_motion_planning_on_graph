@@ -18,7 +18,7 @@ pub mod operators;
 // 'D' is the dimension of the cell
 pub struct MorseCube<const N: usize, const D: usize> {
     // cube is a product of DIRECTED edges
-    // each edge is directed by: cube[i][0] -> cube[i][1]
+    // each edge is oriented from cube[i][0] to cube[i][1]
     pub cube: [[usize; 2]; D],
 
     // number of points in the basepoint
@@ -30,7 +30,7 @@ pub struct MorseCube<const N: usize, const D: usize> {
 }
 
 // This strust represents the one-step of the cubic path.
-// Any instance of this struct must satisfy the condition that the array 'self[..][0]' is ordered, that is, the start of elementary path is sorted. 
+// Any instance of this struct must satisfy the condition that the array 'self[..][0]' is sorted, that is, the start of elementary path is sorted. 
 #[derive(Clone, Copy)]
 pub struct ElementaryCubicPath<const N: usize>{
     data: [[usize;2]; N],
@@ -94,12 +94,14 @@ impl<const N: usize> ElementaryCubicPath<N> {
 
         let idx = self.binary_search_by_key(&v, |&[x,_]| x ).unwrap_err();
         let mut tmp = [v, w];
-        for i in idx..self.size+1 {
+        
+        self.size += 1;
+
+        for i in idx..self.size {
             mem::swap(&mut tmp, &mut self[i]);
         }
 
 
-        self.size += 1;
     }
 
     fn add_without_sort(&mut self, [v, w]: [usize; 2]) {
@@ -112,7 +114,7 @@ impl<const N: usize> ElementaryCubicPath<N> {
         self.size += 1;
     }
     
-    fn from_morse_cube(c: MorseCube<N,1>, graph: &RawSimpleGraph) -> (Self, [[usize; N];2]) {
+    fn from_morse_cube(c: &MorseCube<N,1>, graph: &RawSimpleGraph) -> (Self, [[usize; N];2]) {
         let edge = c.cube[0];
 
         let mut start = [edge[0]; N];
@@ -258,6 +260,19 @@ impl<const N: usize> CubicPath<N> {
     }
 
     pub fn composed_with(mut self, mut other: Self) -> Self {
+
+        // 'self.end' must coinside with 'other.start' setwize.
+        // 'self.start' is sorted, but 'self.end' is in general not sorted.
+        debug_assert!(
+            {
+                let mut end = self.end;
+                end.sort();
+                end == other.start
+            },
+            "cannot compose two path. path1 has end = {:?}, \nbut path2 has start = {:?}.",
+            self.end, other.start
+        );
+
         self.append(&mut other);
 
         let mut end = self.start;
@@ -431,7 +446,7 @@ impl<const N: usize, const D: usize> MorseCube<N, D> {
 }
 
 impl<const N: usize> MorseCube<N, 1> {
-    pub fn get_edge_path(self, graph: &RawSimpleGraph) -> CubicPath<N> {
+    pub fn get_edge_path(&self, graph: &RawSimpleGraph) -> CubicPath<N> {
         let (critical_motion, [start, end]) = ElementaryCubicPath::from_morse_cube(self, graph);
 
         // 'start' and 'end' are already sorted.
@@ -447,8 +462,8 @@ impl<const N: usize> MorseCube<N, 1> {
         let mut path = VecDeque::from([critical_motion]);
         // panic!("start={start:?}");
         // panic!("end={end:?}");
-        let start = Self::get_edge_path_recc::<false>(start, &mut path, graph);
-        let end = Self::get_edge_path_recc::<true>(end, &mut path, graph);
+        let start = get_edge_path_recc::<N, false>(&start, &mut path, graph);
+        let end = get_edge_path_recc::<N, true>(&end, &mut path, graph);
 
         let path = CubicPath{
             path: path.into(),
@@ -458,109 +473,139 @@ impl<const N: usize> MorseCube<N, 1> {
 
         path
     }
+}
 
-    fn get_edge_path_recc<const FORWARD: bool>(points: [usize; N], path: &mut VecDeque<ElementaryCubicPath<N>>, graph: &RawSimpleGraph) -> [usize; N] {
-        // points must be ordered, because we will use the binary search on it.
-        debug_assert!(
-            points.into_iter().zip(points.into_iter().skip(1)).all(|(p, q)| p < q ),
-            "points={points:?} \nhave to be ordered at this point, but it is not."
-        );
+pub struct MorsePath<'a, const N: usize> {
+    start: [usize; N],
+    end: [usize; N],
+    path: Vec<MorseCube<N, 1>>,
+    graph: &'a RawSimpleGraph,
+}
 
-
-        // base case
-        if points.iter().enumerate().all(|(i, &x)| i==x ) {
-            return points;
-        }
-
-        let (cubic_path, size, next_points) = {
-            let mut out = [[0;2]; N];
-            let mut next_points = [0; N];
-            let mut i = 0;
-            for (j, p) in points.into_iter().enumerate() {
-                let next = graph.adjacent_vertices_iter(p)
-                    .take_while(|&v| v < p)
-                    .filter( |&v| graph.maximal_tree_contains([v, p]) )
-                    .next().unwrap_or(p);
-                
-                // check whether 'next' is occupied by some point from 'points' or not.
-                // if it does, then 'p' cannot proceed to 'next'.
-                let next = if points.binary_search(&next).is_ok() {
-                    p
-                } else {
-                    // Now 'p' can proceed to next if it is order-respecting.
-                    if next+1 == p {
-                        next
-                    } else if points.iter().all(|q| !(next..p).contains(q) ) { // TODO: this can be more efficient
-                        next
-                    } else {
-                        // Otherwise 'p' cannnot proceed to 'next'.
-                        p
-                    }
-                };
-
-                if p != next {
-                    out[i] = if FORWARD {
-                        [p, next]
-                    } else {
-                        [next, p]
-                    };
-                    i+=1;
-                }
-
-                // record 'next'
-                next_points[j] = next;
-            }
-            (out, i, next_points)
+impl<'a, const N: usize> MorsePath<'a, N> {
+    pub fn get_geodesic(&'a self) -> CubicPath<N> {
+        let start_path = {
+            let mut path = VecDeque::new();
+            let base = get_edge_path_recc::<N, true>(&self.start, &mut path, self.graph);
+            let path: Vec<_> = path.into();
+            CubicPath{ path: path, start: self.start, end: base }
         };
 
-        let elementary_path = ElementaryCubicPath{ data: cubic_path, size };
+        let end_path = {
+            let mut path = VecDeque::new();
+            let mut end = self.end; end.sort();
+            let base = get_edge_path_recc::<N, false>(&end, &mut path, self.graph);
+            let path: Vec<_> = path.into();
+            CubicPath{ path, start: base, end }
+        };
 
-        if FORWARD {
-            path.push_back( elementary_path );
-        } else {
-            path.push_front( elementary_path );
+        self.path.iter().map(|cell| cell.get_edge_path(self.graph) )
+            .chain(std::iter::once(end_path))
+            .fold( start_path, |accum, x| accum.composed_with(x) )
+    }
+}
+
+
+#[cfg(test)]
+mod morse_path_test {
+    // 'N' is the number of robots
+    const N: usize = 5;
+    use crate::{ graph_collection, graphics, MorsePath, MorseCube };
+
+    #[test]
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let (graph, embedding, name) = graph_collection::RawGraphCollection::Grid.get();
+        
+        let cube1 = MorseCube::<N, 1>{
+            cube: [[70,105]],
+            n_points_stacked_at_basepoint: 2,
+            n_points_stacked_at_cube: [[vec![1,1],vec![]]],
+        };
+
+        let cube2 = MorseCube::<N, 1>{
+            cube: [[88,123]],
+            n_points_stacked_at_basepoint: 1,
+            n_points_stacked_at_cube: [[vec![1,2],vec![]]],
+        };
+        let start = [11, 26, 56, 67, 132];
+        let end = [3, 17, 100, 110, 120];
+        let morse_path = MorsePath{ start, end, path: vec![cube1, cube2], graph: &graph };
+
+        let path = morse_path.get_geodesic();
+
+        // draw the generated paths
+        println!("drawing paths...");
+        graphics::draw_edge_path::<N>(&path, &"morse_path_test", &name, &embedding, &graph)?;
+
+        Ok(())
+    }
+}
+
+
+fn get_edge_path_recc<const N: usize, const FORWARD: bool>(points: &[usize; N], path: &mut VecDeque<ElementaryCubicPath<N>>, graph: &RawSimpleGraph) -> [usize; N] {
+    // points must be ordered, because we will use the binary search on it.
+    debug_assert!(
+        points.into_iter().zip(points.into_iter().skip(1)).all(|(p, q)| p < q ),
+        "points={points:?} \nhave to be ordered at this point, but it is not."
+    );
+
+
+    // base case
+    if points.iter().enumerate().all(|(i, &x)| i==x ) {
+        return *points;
+    }
+
+    let (cubic_path, size, next_points) = {
+        let mut out = [[0;2]; N];
+        let mut next_points = [0; N];
+        let mut i = 0;
+        for (j, p) in points.iter().copied().enumerate() {
+            let next = graph.adjacent_vertices_iter(p)
+                .take_while(|&v| v < p)
+                .filter( |&v| graph.maximal_tree_contains([v, p]) )
+                .next().unwrap_or(p);
+            
+            // check whether 'next' is occupied by some point from 'points' or not.
+            // if it does, then 'p' cannot proceed to 'next'.
+            let next = if points.binary_search(&next).is_ok() {
+                p
+            } else {
+                // Now 'p' can proceed to next if it is order-respecting.
+                if next+1 == p {
+                    next
+                } else if points.iter().all(|q| !(next..p).contains(q) ) { // TODO: this can be more efficient
+                    next
+                } else {
+                    // Otherwise 'p' cannnot proceed to 'next'.
+                    p
+                }
+            };
+
+            if p != next {
+                out[i] = if FORWARD {
+                    [p, next]
+                } else {
+                    [next, p]
+                };
+                i+=1;
+            }
+
+            // record 'next'
+            next_points[j] = next;
         }
+        (out, i, next_points)
+    };
 
-        // println!("next_points = {next_points:?}");
+    let elementary_path = ElementaryCubicPath{ data: cubic_path, size };
 
-        // run the function recursively
-        Self::get_edge_path_recc::<FORWARD>(next_points, path, graph)
-    }
-}
-
-// fn get_a_path_on_maximal_tree<const N: usize>(start: [usize;N], goal: [usize;N], graph: &RawSimpleGraph) -> Vec<MorseCube<N,1>> {
-//     s
-// }
-
-fn get_a_path_on_maximal_tree_recc<const N: usize>(start: &[usize;N], goal: &[usize;N], essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<MorseCube<N,1>> {
-    let out = Vec::new();
-    
-    let next_vertices = graph.adjacent_vertices_iter(essential_vertex)
-        .skip_while(|v| *v < essential_vertex)
-        .filter(|v| graph.maximal_tree_contains([essential_vertex, *v]) )
-        .collect::<Vec<_>>();
-
-    let mut next_essential_vertices = Vec::new(); 
-    next_essential_vertices.reserve( next_vertices.len() );
-    for v in &next_vertices {
-        let next_essentail_vertex = (*v..).find(|w| graph.degree_of(*w) > 2 );
-        next_essential_vertices.push( next_essentail_vertex );
+    if FORWARD {
+        path.push_back( elementary_path );
+    } else {
+        path.push_front( elementary_path );
     }
 
-    // collect points below the essential vertex
-    let points_start_here = (0..=essential_vertex).rev().filter(|w| graph.degree_of(*w)==2 ).filter(|w| start.binary_search(w).is_ok() ).collect::<Vec<_>>();
-    let points_goal_here = (0..=essential_vertex).rev().filter(|w| graph.degree_of(*w)==2 ).filter(|w| goal.binary_search(w).is_ok() ).collect::<Vec<_>>();
+    // println!("next_points = {next_points:?}");
 
-    out
+    // run the function recursively
+    get_edge_path_recc::<N, FORWARD>(&next_points, path, graph)
 }
-
-
-// #[cfg(test)]
-// mod cubic_path_test {
-//     use crate::ElementaryCubicPath;
-
-//     #[test] 
-//     fn reduce_to_geodesic() {
-//         let a = ElementaryCubicPath([[0,0], [1,2]]);
-//     }
-// }
