@@ -3,13 +3,76 @@ use std::{collections::VecDeque, fmt::Debug};
 use topo_spaces::graph::RawSimpleGraph;
 
 use std::ops::{Deref, DerefMut};
-use std::mem;
+use std::{mem, usize};
 
 
 pub mod graph_collection;
 pub mod graphics;
 pub mod search;
 pub mod operators;
+
+
+#[derive(Clone, Copy)]
+pub struct SortedArray<const N: usize, T: Ord> {
+    data: [T; N],
+    len: usize,
+}
+
+impl<const N: usize, T: Ord + Copy> SortedArray<N, T> {}
+
+impl<const N: usize, T: Ord + Copy> std::ops::Deref for SortedArray<N, T> {
+    type Target = [T];
+    fn deref(&self) -> &Self::Target {
+        &self.data[..self.len]
+    }
+}
+
+impl<const N: usize, T: Ord + Copy> std::ops::DerefMut for SortedArray<N, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data[..self.len]
+    }
+}
+
+impl<const N: usize, T: Ord + Copy + Debug> Debug for SortedArray<N, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.data[..self.len].fmt(f)
+    }
+}
+
+impl<const N: usize, T: Ord + Copy + Debug> SortedArray<N,T> {
+    pub fn new() -> Self {
+        let data = unsafe {
+            mem::MaybeUninit::uninit().assume_init()
+        };
+        Self { data, len: 0 }
+    }
+
+    pub fn add_without_sort(&mut self, v: T) {
+        assert!(self.len<N, "The array is full. array={self:?}, while trying to add {v:?}");
+
+        unsafe{
+            self.data.as_mut_ptr().add(self.len).write(v);
+        }
+
+        self.len+=1;
+        debug_assert!(self.iter().zip(self.iter().skip(1)).all(|(x,y)| x<y ))
+    }
+
+    pub fn add(&mut self, v: T) {
+        assert!(self.len<N, "The array is full. array={self:?}, while trying to add {v:?}");
+
+        unsafe{
+            self.data.as_mut_ptr().add(self.len).write(v);
+        }
+        self.len+=1;
+
+        self.sort(); // ToDo: This can be more efficient
+    }
+
+    fn into_iter(self) -> impl Iterator<Item = T> { 
+        self.data.into_iter().take(self.len)
+    }
+}
 
 
 #[derive(Clone)]
@@ -25,40 +88,38 @@ pub struct MorseCube<const N: usize, const D: usize> {
     pub n_points_stacked_at_basepoint: usize,
 
     // number of points stacked on the cube.
-    // 'n_points_stacked_at_cube[d][i]' is the number of points that is stacked at the 'cube[d][i]'
-    pub n_points_stacked_at_cube: [[Vec<usize>; 2]; D]
+    // 'n_points_stacked_at_cube[i]' is the tuple '(v,m)' such that 'm' points are stacked at 'v'
+    pub n_points_stacked_at_cube: SortedArray<N,(usize,usize)>,
 }
 
 // This strust represents the one-step of the cubic path.
 // Any instance of this struct must satisfy the condition that the array 'self[..][0]' is sorted, that is, the start of elementary path is sorted. 
 #[derive(Clone, Copy)]
-pub struct ElementaryCubicPath<const N: usize>{
-    data: [[usize;2]; N],
-    size: usize,
-}
-
-impl<const N: usize> Deref for ElementaryCubicPath<N> {
-    type Target = [[usize;2]];
-    fn deref(&self) -> &Self::Target {
-        &self.data[..self.size]
-    }
-}
-
-impl<const N: usize> DerefMut for ElementaryCubicPath<N> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data[..self.size]
-    }
-}
+pub struct ElementaryCubicPath<const N: usize>(SortedArray<N,[usize;2]>);
 
 impl<const N: usize> Debug for ElementaryCubicPath<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.data[..self.size].fmt(f)
+        self.0.fmt(f)
     }
 }
 
+impl<const N: usize> Deref for ElementaryCubicPath<N>{
+    type Target = SortedArray<N, [usize;2]>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<const N: usize> DerefMut for ElementaryCubicPath<N>{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+
 impl<const N: usize> ElementaryCubicPath<N> {
     pub fn new() -> Self {
-        Self { data: [[0; 2]; N], size: 0 }
+        Self(SortedArray::new())
     }
 
     pub fn act_on(&self, p: &mut [usize; N]) {
@@ -82,39 +143,8 @@ impl<const N: usize> ElementaryCubicPath<N> {
             };
         }
     }
-
-    fn into_iter(self) -> impl Iterator<Item = [usize; 2]> { 
-        self.data.into_iter().take(self.size)
-    }
-
-    fn add(&mut self, [v, w]: [usize; 2]) {
-        debug_assert!(self.size < N); 
-        debug_assert!(v < w);
-        debug_assert!(self.iter().all(|&[x, y]| v!=x && v!=y && w!=x && w!=y ));
-
-        let idx = self.binary_search_by_key(&v, |&[x,_]| x ).unwrap_err();
-        let mut tmp = [v, w];
-        
-        self.size += 1;
-
-        for i in idx..self.size {
-            mem::swap(&mut tmp, &mut self[i]);
-        }
-
-
-    }
-
-    fn add_without_sort(&mut self, [v, w]: [usize; 2]) {
-        debug_assert!(self.size < N); 
-        debug_assert!(self.iter().all(|&[x, y]| v!=x && v!=y && w!=x && w!=y ));
-
-        self.data[self.size] = [v,w];
-
-
-        self.size += 1;
-    }
     
-    fn from_morse_cube(c: &MorseCube<N,1>, graph: &RawSimpleGraph) -> (Self, [[usize; N];2]) {
+    fn from_morse_cube(c: &MorseCube<N,1>) -> (Self, [[usize; N];2]) {
         let edge = c.cube[0];
 
         let mut start = [edge[0]; N];
@@ -125,41 +155,23 @@ impl<const N: usize> ElementaryCubicPath<N> {
             *start_handle.next().unwrap() = p;
         }
         
-        // compute the positions of points stacked at the start vertex of the edge
-        let start_idx = edge[0];
-        let points_at_start = &c.n_points_stacked_at_cube[0][0];
-        graph.adjacent_vertices_iter( start_idx )
-            .skip_while(|&w| w < start_idx )
-            .filter(|&w| graph.maximal_tree_contains([start_idx, w]))
-            .zip( points_at_start.iter() )
-            .for_each(|(w, &n_stacked_at_v)| {
-                (0..n_stacked_at_v).for_each(|i| *start_handle.next().unwrap() = w+i );
-            });
+        // compute the positions of points stacked at the edge
+        for (v, m) in c.n_points_stacked_at_cube.into_iter() {
+            for i in 0..m {
+                *start_handle.next().unwrap() = v+i;
+            }
+        }
 
-        // compute the positions of points stacked at the end vertex of the edge
-        let end_idx = edge[1];
-        let points_at_end = &c.n_points_stacked_at_cube[0][1];
-        graph.adjacent_vertices_iter( end_idx )
-            .skip_while(|&w| w < end_idx )
-            .filter(|&w| graph.maximal_tree_contains([end_idx, w]))
-            .zip( points_at_end.iter() )
-            .for_each(|(w, &n_stacked_at_v)| {
-                (0..n_stacked_at_v).for_each(|i| *start_handle.next().unwrap() = w+i );
-            });
-        
-        // the two iteration above should exactly use up the iterator 'start_handle'.
+        // This should use up the iterator.
         assert_eq!(start_handle.next(), None);
 
         // sort the elementary motion so that the start is ordered
         start.sort();
 
         let out = {
-            let mut out = [[0;2]; N];
-            out[0] = edge;
-            Self{
-                data: out,
-                size: 1
-            }
+            let mut out = ElementaryCubicPath::new();
+            out.add_without_sort(edge);
+            out
         };
 
         let mut end = start;
@@ -171,25 +183,25 @@ impl<const N: usize> ElementaryCubicPath<N> {
     }
 
     fn remove(&mut self, [v,w]: [usize; 2]) {
-        debug_assert!(self.size > 0, "cannot remove from edge motion from identity motion");
+        debug_assert!(self.len > 0, "cannot remove from edge motion from identity motion");
         
         let idx = self.binary_search(&[v, w]).unwrap();
-        for i in idx..self.size-1 {
+        for i in idx..self.len-1 {
             self.swap(i, i+1);
         }
 
-        self.size -= 1;
+        self.len -= 1;
     }
 
 
     fn remove_by_idx(&mut self, idx: usize) {
-        debug_assert!(self.size > 0, "cannot remove from edge motion from identity motion");
+        debug_assert!(self.len > 0, "cannot remove from edge motion from identity motion");
         
-        for i in idx..self.size-1 {
+        for i in idx..self.len-1 {
             self.swap(i, i+1);
         }
 
-        self.size -= 1;
+        self.len -= 1;
     }
 
 
@@ -216,7 +228,7 @@ impl<const N: usize> ElementaryCubicPath<N> {
     // }
 
     fn is_identity(&self) -> bool {
-        self.size==0
+        self.len==0
     }
 }
 
@@ -388,7 +400,7 @@ impl<const N: usize> CubicPath<N> {
                 if let Some(non_commuting_idx) = (0..out.len()).rev().find(|&i| out[i].iter().any(|&[x, y]| v==x || v==y || w==x || w==y ) ) {
                     let non_commuting_motion = &mut out[non_commuting_idx];
                     if let Ok(idx) = non_commuting_motion.binary_search(&[w, v] ) {
-                        // if 'non_commuting_motion' contains an inverse motion of [v,w], remove it from 'non_commuting_motion'
+                        // if 'non_commuting_motion' contains the inverse motion of [v,w], remove it from 'non_commuting_motion'
                         non_commuting_motion.remove_by_idx(idx);
                         
                         // remove 'non_commuting_motion' if the motion is now the identity motion
@@ -396,14 +408,18 @@ impl<const N: usize> CubicPath<N> {
                             out.remove(non_commuting_idx);
                         }
                     } else {
+                        // if 'non_commuting_motion' does not contain the inverse
                         if non_commuting_idx == out.len()-1 {
                             new_motion.add_without_sort([v,w]);
                         } else {
-                            out[non_commuting_idx+1].add([v,w])
+                            out[non_commuting_idx+1].add([v,w]);
                         }
                     }
                 } else {
                     // if '[v,w]' commutes with every motion in 'out', then insert the motion at the front.
+                    if [v, w] == [85,86] {
+                        println!("out={out:?}");
+                    }
                     out[0].add([v,w]);
                 }
             }
@@ -426,28 +442,22 @@ impl<const N: usize> CubicPath<N> {
 impl<const N: usize, const D: usize> MorseCube<N, D> {
     pub fn is_valid(&self, graph: &RawSimpleGraph) -> bool {
         // check that the number of points is correct
-        let n_stacked_points = self.n_points_stacked_at_cube.iter().map(|[x1,x2]| x1.iter().chain(x2.iter()) ).flatten().sum::<usize>();
+        let n_stacked_points = self.n_points_stacked_at_cube.iter().map(|(_,m)| m ).sum::<usize>();
         if N != D+self.n_points_stacked_at_basepoint+n_stacked_points {
             return false;
         }
 
         // check that the cell is contained in the graph
-        self.cube.iter()
-            .zip(self.n_points_stacked_at_cube.iter())
-            .map(|([x1,x2], [y1,y2])| [(x1, y1), (x2, y2)] )
-            .flatten()
-            .map(|(v, x)| graph.adjacent_vertices_iter(*v).skip_while(|&w| w < *v ).filter(|&w| graph.maximal_tree_contains([*v, w])).zip( x.iter() ) )
-            .flatten()
-            .all(|(next_vertex, &n_points) | 
-                // check that none of them is neither a vertex of degree one nor an essential vertex
-                (0..n_points-1).all(|i| graph.degree_of(next_vertex + i)==2 )
-            )
+        self.n_points_stacked_at_cube.into_iter().all( |(v,m)|
+            (v..v+m-1).zip(v+1..v+m).all(|(i,j)| 
+                j < graph.n_vertices() && graph.maximal_tree_contains([i, j]) 
+            ))
     }
 }
 
 impl<const N: usize> MorseCube<N, 1> {
     pub fn get_edge_path(&self, graph: &RawSimpleGraph) -> CubicPath<N> {
-        let (critical_motion, [start, end]) = ElementaryCubicPath::from_morse_cube(self, graph);
+        let (critical_motion, [start, end]) = ElementaryCubicPath::from_morse_cube(self);
 
         // 'start' and 'end' are already sorted.
         debug_assert!( 
@@ -488,7 +498,7 @@ impl<'a, const N: usize> MorsePath<'a, N> {
             let mut path = VecDeque::new();
             let base = get_edge_path_recc::<N, true>(&self.start, &mut path, self.graph);
             let path: Vec<_> = path.into();
-            CubicPath{ path: path, start: self.start, end: base }
+            CubicPath{ path, start: self.start, end: base }
         };
 
         let end_path = {
@@ -498,6 +508,9 @@ impl<'a, const N: usize> MorsePath<'a, N> {
             let path: Vec<_> = path.into();
             CubicPath{ path, start: base, end }
         };
+
+        println!("start_path={start_path:?}");
+        println!("end_path={end_path:?}");
 
         self.path.iter().map(|cell| cell.get_edge_path(self.graph) )
             .chain(std::iter::once(end_path))
@@ -510,23 +523,38 @@ impl<'a, const N: usize> MorsePath<'a, N> {
 mod morse_path_test {
     // 'N' is the number of robots
     const N: usize = 5;
-    use crate::{ graph_collection, graphics, MorsePath, MorseCube };
+    use crate::{ graph_collection, graphics, MorsePath, MorseCube, SortedArray };
 
     #[test]
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
+    fn morse_path() -> Result<(), Box<dyn std::error::Error>> {
         let (graph, embedding, name) = graph_collection::RawGraphCollection::Grid.get();
         
+        let n_points_stacked_at_cube = {
+            let mut out = SortedArray::new();
+            out.add((71,1));
+            out.add((74,1));
+            out
+        };
         let cube1 = MorseCube::<N, 1>{
             cube: [[70,105]],
             n_points_stacked_at_basepoint: 2,
-            n_points_stacked_at_cube: [[vec![1,1],vec![]]],
+            n_points_stacked_at_cube
         };
+        cube1.is_valid(&graph);
 
+        let n_points_stacked_at_cube = {
+            let mut out = SortedArray::new();
+            out.add((89,1));
+            out.add((92,2));
+            out
+        };
         let cube2 = MorseCube::<N, 1>{
             cube: [[88,123]],
             n_points_stacked_at_basepoint: 1,
-            n_points_stacked_at_cube: [[vec![1,2],vec![]]],
+            n_points_stacked_at_cube
         };
+        cube2.is_valid(&graph);
+        
         let start = [11, 26, 56, 67, 132];
         let end = [3, 17, 100, 110, 120];
         let morse_path = MorsePath{ start, end, path: vec![cube1, cube2], graph: &graph };
@@ -555,10 +583,9 @@ fn get_edge_path_recc<const N: usize, const FORWARD: bool>(points: &[usize; N], 
         return *points;
     }
 
-    let (cubic_path, size, next_points) = {
-        let mut out = [[0;2]; N];
+    let (elementary_path, next_points) = {
+        let mut out = SortedArray::new();
         let mut next_points = [0; N];
-        let mut i = 0;
         for (j, p) in points.iter().copied().enumerate() {
             let next = graph.adjacent_vertices_iter(p)
                 .take_while(|&v| v < p)
@@ -582,21 +609,18 @@ fn get_edge_path_recc<const N: usize, const FORWARD: bool>(points: &[usize; N], 
             };
 
             if p != next {
-                out[i] = if FORWARD {
-                    [p, next]
+                if FORWARD {
+                    out.add([p, next]);
                 } else {
-                    [next, p]
+                    out.add([next, p]);
                 };
-                i+=1;
             }
 
             // record 'next'
             next_points[j] = next;
         }
-        (out, i, next_points)
+        (ElementaryCubicPath( out ), next_points)
     };
-
-    let elementary_path = ElementaryCubicPath{ data: cubic_path, size };
 
     if FORWARD {
         path.push_back( elementary_path );

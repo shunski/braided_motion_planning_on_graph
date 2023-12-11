@@ -172,9 +172,9 @@ fn dynamic_search_on_tree_recc(graph: &RawSimpleGraph, points: &[usize], essenti
 
     // do the necessary swapping for the returning points and traveling points.
     // these points have indces >= "first_returning_idx"
-    for n in swapping_orders {
+    // for n in swapping_orders {
         
-    }
+    // }
 
     // get the ordering in the current vertex
     println!("swapping at current vertex. points = {:?}, next_vertices = {next_vertices:?}", Vec::from(&points[0..first_returning_idx]));
@@ -191,6 +191,7 @@ fn dynamic_search_on_tree_recc(graph: &RawSimpleGraph, points: &[usize], essenti
 // 'next_vertices' is the labels of vertices
 // 'blocked_vertices' is counting the points in the branch 
 // returns some cube if it is the non-trivial group element
+#[allow(unused)]
 fn get_the_critical_one_cell_of(n_points: usize, essential_vertex: usize, branch_idx: usize, next_vertices: &[usize], blocked_vertices: &mut[usize]) -> Option<Cube> {
     // if the edge is not disrespecting anything then return 'None'.
     if (0..branch_idx).all(|i| blocked_vertices[i]==0) {
@@ -341,21 +342,21 @@ fn get_next_essential_vertices(essential_vertex: usize, graph: &RawSimpleGraph) 
     out
 }
 
-fn get_next_vertices(essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<usize> {
-    graph.adjacent_vertices_iter(essential_vertex)
-        .skip(1)
-        .filter(|&v| graph.maximal_tree_contains( [essential_vertex, v] ))
-        .collect::<Vec<_>>()
-}
+// fn get_next_vertices(essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<usize> {
+//     graph.adjacent_vertices_iter(essential_vertex)
+//         .skip(1)
+//         .filter(|&v| graph.maximal_tree_contains( [essential_vertex, v] ))
+//         .collect::<Vec<_>>()
+// }
 
-fn branch_index_of(v: usize, next_vertices: &[usize]) -> usize {
-    debug_assert!(v >= next_vertices[0]);
-    let idx_op = (0..next_vertices.len()-1).find(|&i| next_vertices[i] <= v && v < next_vertices[i+1] );
-    match idx_op {
-        Some(idx) => idx,
-        None => next_vertices.len()-1,
-    }
-}
+// fn branch_index_of(v: usize, next_vertices: &[usize]) -> usize {
+//     debug_assert!(v >= next_vertices[0]);
+//     let idx_op = (0..next_vertices.len()-1).find(|&i| next_vertices[i] <= v && v < next_vertices[i+1] );
+//     match idx_op {
+//         Some(idx) => idx,
+//         None => next_vertices.len()-1,
+//     }
+// }
 
 #[cfg(test)]
 mod dynamic_search_test {
@@ -426,12 +427,12 @@ mod dynamic_search_test {
 
 
 pub fn path_in_tree<const N: usize>(points: [[usize; 2]; N], graph: &RawSimpleGraph) -> MorsePath<N> {
-    let graph_ = GraphInformation::from(graph);
+    let graph = GraphInformation::from(graph);
 
-
+    let graph = 
 }
 
-pub fn path_at_dyn<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
+fn path_at_dyn<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
     // 'essential vertex' has to an essential vertex
     debug_assert!(
         graph.degree_in_maximal_tree(essential_vertex) > 2,
@@ -454,6 +455,8 @@ pub fn path_at_dyn<const N: usize>(essential_vertex: usize, points: &[[usize; 2]
 
     let mut stacked_points = vec![0; graph.next_vertices[essential_vertex].len()];
 
+
+    // points in the branch that has no more essential vertices also need to be swapped.
     for (v,w) in graph.next_vertices[essential_vertex].iter()
         .zip( graph.next_essential_vertices[essential_vertex].iter() )
         .filter( |(_, w)| graph.degree_in_maximal_tree(**w)==1 ) 
@@ -474,7 +477,7 @@ pub fn path_at_dyn<const N: usize>(essential_vertex: usize, points: &[[usize; 2]
         } 
     }
 
-    let swapping_at_this_vertex = swap_at(essential_vertex, &mut points_swapped_here, &stacked_points, graph);
+    let swapping_at_this_vertex = swap_at::<N>(essential_vertex, &mut points_swapped_here, &stacked_points, graph);
 }
 
 fn swap_at<const N: usize>(essential_vertex: usize, points_swapped_here: &mut [[usize;2]], stacked_points: &[usize], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
@@ -520,21 +523,25 @@ impl<'a> GraphInformation<'a> {
         }
     }
 
-    fn get_next_essential_vertices_dictionary(graph: &RawSimpleGraph) -> Vec<(usize, Vec<usize>)> {
-        graph.vertex_iter()
+    fn get_next_essential_vertices_dictionary(graph: &RawSimpleGraph) -> UsizeIndexable<Vec<usize>> {
+        let out = graph.vertex_iter()
             .map(|v| v.vertex() )
             .filter(|v| graph.degree_in_maximal_tree(*v) != 2 )
             .map(|v| (v, get_next_essential_vertices(v, graph)))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+
+        UsizeIndexable(out)
     }
     
     
-    fn get_next_vertices_dictionary(graph: &RawSimpleGraph) -> Vec<(usize, Vec<usize>)> {
-        graph.vertex_iter()
+    fn get_next_vertices_dictionary(graph: &RawSimpleGraph) -> UsizeIndexable<Vec<usize>> {
+        let out = graph.vertex_iter()
             .map(|v| v.vertex() )
             .filter(|v| graph.degree_in_maximal_tree(*v) != 2 )
             .map(|v| (v, get_next_vertices(v, graph)))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+
+        UsizeIndexable(out)
     }
     
     fn get_essential_vertices(graph: &RawSimpleGraph) -> Vec<usize> {
