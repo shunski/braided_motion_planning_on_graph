@@ -342,12 +342,12 @@ fn get_next_essential_vertices(essential_vertex: usize, graph: &RawSimpleGraph) 
     out
 }
 
-// fn get_next_vertices(essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<usize> {
-//     graph.adjacent_vertices_iter(essential_vertex)
-//         .skip(1)
-//         .filter(|&v| graph.maximal_tree_contains( [essential_vertex, v] ))
-//         .collect::<Vec<_>>()
-// }
+fn get_next_vertices(essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<usize> {
+    graph.adjacent_vertices_iter(essential_vertex)
+        .skip(1)
+        .filter(|&v| graph.maximal_tree_contains( [essential_vertex, v] ))
+        .collect::<Vec<_>>()
+}
 
 // fn branch_index_of(v: usize, next_vertices: &[usize]) -> usize {
 //     debug_assert!(v >= next_vertices[0]);
@@ -432,7 +432,7 @@ pub fn path_in_tree<const N: usize>(points: [[usize; 2]; N], graph: &RawSimpleGr
     let graph = 
 }
 
-fn path_at_dyn<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
+fn path_at_essential_vertex_dyn<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
     // 'essential vertex' has to an essential vertex
     debug_assert!(
         graph.degree_in_maximal_tree(essential_vertex) > 2,
@@ -443,6 +443,17 @@ fn path_at_dyn<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N]
         points.iter().map(|x|x[0]).zip(points.iter().map(|x|x[0]).skip(1)).all(|(x,y)| x < y),
         "'start' is not sorted."
     );
+
+
+    // the output of this function. This contains all the non-triavial motion done above this essential vertex.
+    let mut path = MorsePath::new();
+
+    // if there is a vacant branch, then the algorithm can be a lot easier, so check 
+    let vacant_branch = graph.next_vertices[essential_vertex].iter()
+        .zip( graph.next_essential_vertices[essential_vertex].iter() )
+        .filter(|(_, w)| graph.degree_in_maximal_tree(**w)==1)
+        .filter(|&(v, w)| !points.iter().any(|[s,_]| v<=s || s<=w ))
+        .next();
 
 
     // 'points_swapped_here' is the start points below the essential vertex but above the previous essential vertex.
@@ -456,28 +467,34 @@ fn path_at_dyn<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N]
     let mut stacked_points = vec![0; graph.next_vertices[essential_vertex].len()];
 
 
-    // points in the branch that has no more essential vertices also need to be swapped.
+
+    // points in the branch that has no more essential vertices also need to be swapped here.
     for (v,w) in graph.next_vertices[essential_vertex].iter()
         .zip( graph.next_essential_vertices[essential_vertex].iter() )
         .filter( |(_, w)| graph.degree_in_maximal_tree(**w)==1 ) 
     {
         for [s, g] in points {
             if v <= s && s <= w {
-                points_swapped_here.push( [*s, *g] );
+                points_swapped_here.push( [*s,*g] );
             } else {
                 let idx = graph.next_vertices[essential_vertex]
                     .iter()
                     .take_while(|t| s<t )
                     .enumerate()
-                    .last().unwrap().0; // Todo: Change this to binary search
+                    .last().unwrap().0; // ToDo: Change this to binary search
                 
-
                 stacked_points[idx] += 1;
             }
         } 
     }
 
+    // Those points swapped here that are added in the previous for-loop must disrespect the order to come down to the stem,
+    // so add the motion to the 'path'.
+    
+
     let swapping_at_this_vertex = swap_at::<N>(essential_vertex, &mut points_swapped_here, &stacked_points, graph);
+
+    debug
 }
 
 fn swap_at<const N: usize>(essential_vertex: usize, points_swapped_here: &mut [[usize;2]], stacked_points: &[usize], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
