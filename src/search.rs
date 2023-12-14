@@ -5,7 +5,7 @@ use alg::non_commutative::permutation::{ConstPermutation, VecPermutation};
 use alg::non_commutative::Group;
 use topo_spaces::graph::{CubeFactor, RawSimpleGraph};
 
-use crate::{MorsePath, MorseCube};
+use crate::{MorsePath, MorseCube, SortedArray};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct Node<const N: usize> {
@@ -463,46 +463,72 @@ fn path_at_essential_vertex_dyn<const N: usize>(essential_vertex: usize, points:
         .take_while(|&&[s, _]| s <= essential_vertex)
         .copied()
         .collect::<Vec<_>>();
+    let points_in_stem = points_swapped_here.len();
 
-    let mut stacked_points = vec![0; graph.next_vertices[essential_vertex].len()];
-
-
-
+    
     // points in the branch that has no more essential vertices also need to be swapped here.
-    for (v,w) in graph.next_vertices[essential_vertex].iter()
-        .zip( graph.next_essential_vertices[essential_vertex].iter() )
-        .filter( |(_, w)| graph.degree_in_maximal_tree(**w)==1 ) 
-    {
-        for [s, g] in points {
-            if v <= s && s <= w {
-                points_swapped_here.push( [*s,*g] );
+    let mut branch_iter = graph.next_vertices[essential_vertex].iter().copied()
+    .zip( graph.next_essential_vertices[essential_vertex].iter().copied() );
+
+    let mut curr_branch = branch_iter.next().unwrap();
+    let mut next_branch = branch_iter.next().unwrap();
+    let mut points_coming_down_to_stem = SortedArray::new();
+    let mut stacked_points = SortedArray::new();
+    for [s,g] in points.iter().copied() {
+        let mut branch_changed = false;
+        while next_branch.0 <= s {
+            curr_branch = next_branch;
+            next_branch = branch_iter.next().unwrap_or((usize::MAX, usize::MAX));
+            branch_changed = true;
+        }
+
+        if graph.degree_in_maximal_tree(curr_branch.1) == 1 {
+            points_swapped_here.push( [s,g] );
+            if branch_changed || points_coming_down_to_stem.is_empty() {
+                points_coming_down_to_stem.add_without_sort((curr_branch.0, 1_usize));
             } else {
-                let idx = graph.next_vertices[essential_vertex]
-                    .iter()
-                    .take_while(|t| s<t )
-                    .enumerate()
-                    .last().unwrap().0; // ToDo: Change this to binary search
-                
-                stacked_points[idx] += 1;
+                // otherwise, increment the existing counter
+                debug_assert!(points_coming_down_to_stem.last().unwrap().0==curr_branch.0);
+                points_coming_down_to_stem.last_mut().unwrap().1 += 1;
             }
-        } 
+        } else {
+            // otherwise, '[s,g]' is the point that is sorted by other essential vertex.
+            if branch_changed || stacked_points.is_empty() {
+                stacked_points.add_without_sort((curr_branch.0, 1_usize));
+            } else {
+                // otherwise, increment the existing counter
+                debug_assert!(stacked_points.last().unwrap().0==curr_branch.0);
+                stacked_points.last_mut().unwrap().1 += 1;
+            }
+        }
     }
 
     // Those points swapped here that are added in the previous for-loop must disrespect the order to come down to the stem,
-    // so add the motion to the 'path'.
-    
+    // so add the motion to 'path'.
+    for (v, n_points_from_v) in points_coming_down_to_stem.into_iter() {
+        let edge = [v, essential_vertex];
+        let n_points_stacked_at_basepoint = points.iter().take_while(|[a,_]|a<=&essential_vertex).count();
+        for i in (0..n_points_from_v).rev() {
+            let mut n_points_stacked_at_cube = stacked_points;
+            n_points_stacked_at_cube.add((v, i));
+            path.push( MorseCube {
+                cube: [edge],
+                n_points_stacked_at_basepoint,
+                n_points_stacked_at_cube,
+            } );
+        }
+    }
 
     let swapping_at_this_vertex = swap_at::<N>(essential_vertex, &mut points_swapped_here, &stacked_points, graph);
 
     debug
 }
 
-fn swap_at<const N: usize>(essential_vertex: usize, points_swapped_here: &mut [[usize;2]], stacked_points: &[usize], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
+fn swap_at<const N: usize>(essential_vertex: usize, points_swapped_here: &mut [[usize;2]], stacked_points: &SortedArray<N, (usize, usize)>, graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
     let n_branch = stacked_points.len();
     let mut swappings = Vec::new();
 
     let mut evacuation_branch = false;
-    
 
     swappings
 }

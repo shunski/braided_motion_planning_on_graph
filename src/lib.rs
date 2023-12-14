@@ -39,6 +39,21 @@ impl<const N: usize, T: Ord + Copy + Debug> Debug for SortedArray<N, T> {
     }
 }
 
+impl<const N: usize, const M: usize, T: Ord+Copy+Debug> From<[T; M]> for SortedArray<N, T> {
+    fn from(v: [T; M]) -> Self {
+        assert!(M<=N);
+        debug_assert!(v.iter().zip(v.iter().skip(1)).all(|(x,y)| x<y ), 
+            "Input to this function must be a sorted array of distinct elements, but v={v:?}."
+        );
+
+        let mut out = Self::new();
+        for x in v {
+            out.add_without_sort(x);
+        }
+        out
+    }
+}
+
 impl<const N: usize, T: Ord + Copy + Debug> SortedArray<N,T> {
     pub fn new() -> Self {
         let data = unsafe {
@@ -81,7 +96,7 @@ impl<const N: usize, T: Ord + Copy + Debug> SortedArray<N,T> {
 // 'D' is the dimension of the cell
 pub struct MorseCube<const N: usize, const D: usize> {
     // cube is a product of DIRECTED edges
-    // each edge is oriented from cube[i][0] to cube[i][1]
+    // each edge is oriented from cube[d][0] to cube[d][1], where 0 <= d < D.
     pub cube: [[usize; 2]; D],
 
     // number of points in the basepoint
