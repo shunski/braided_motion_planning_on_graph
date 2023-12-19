@@ -1,11 +1,13 @@
+use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::ops::RangeBounds;
 
 use topo_spaces::cubical::{EdgePath, Cube};
 use alg::non_commutative::permutation::{ConstPermutation, VecPermutation};
 use alg::non_commutative::Group;
 use topo_spaces::graph::{CubeFactor, RawSimpleGraph};
 
-use crate::{MorsePath, MorseCube};
+use crate::{MorsePath, MorseCube, SortedArray};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct Node<const N: usize> {
@@ -429,82 +431,193 @@ mod dynamic_search_test {
 pub fn path_in_tree<const N: usize>(points: [[usize; 2]; N], graph: &RawSimpleGraph) -> MorsePath<N> {
     let graph = GraphInformation::from(graph);
 
-    let graph = 
+    let graph = ;
 }
 
-fn path_at_essential_vertex_dyn<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
-    // 'essential vertex' has to an essential vertex
-    debug_assert!(
-        graph.degree_in_maximal_tree(essential_vertex) > 2,
-        "essential_vertex={essential_vertex} is not an essential vertex."
-    );
-    // 'points' must be sorted by the order of starting points.
-    debug_assert!(
-        points.iter().map(|x|x[0]).zip(points.iter().map(|x|x[0]).skip(1)).all(|(x,y)| x < y),
-        "'start' is not sorted."
-    );
+fn path_at_essential_vertex_dyn<const N: usize>(essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &GraphInformation) -> MorsePath<N> {
+    let mut motions = MorsePath::new();
+    
+    motions.compose( sort_points_in_stem::<N>(essential_vertex, points, graph) );
 
-
-    // the output of this function. This contains all the non-triavial motion done above this essential vertex.
-    let mut path = MorsePath::new();
-
-    // if there is a vacant branch, then the algorithm can be a lot easier, so check 
-    let vacant_branch = graph.next_vertices[essential_vertex].iter()
-        .zip( graph.next_essential_vertices[essential_vertex].iter() )
-        .filter(|(_, w)| graph.degree_in_maximal_tree(**w)==1)
-        .filter(|&(v, w)| !points.iter().any(|[s,_]| v<=s || s<=w ))
-        .next();
-
-
-    // 'points_swapped_here' is the start points below the essential vertex but above the previous essential vertex.
-    let prev_essential_vertex = (0..essential_vertex).rev().take_while(|&v| graph.degree_in_maximal_tree(v) <= 2).last().unwrap();
-    let mut points_swapped_here = points.iter()
-        .skip_while(|&&[s, _]| s <= prev_essential_vertex )
-        .take_while(|&&[s, _]| s <= essential_vertex)
-        .copied()
-        .collect::<Vec<_>>();
-
-    let mut stacked_points = vec![0; graph.next_vertices[essential_vertex].len()];
-
-
-
-    // points in the branch that has no more essential vertices also need to be swapped here.
-    for (v,w) in graph.next_vertices[essential_vertex].iter()
-        .zip( graph.next_essential_vertices[essential_vertex].iter() )
-        .filter( |(_, w)| graph.degree_in_maximal_tree(**w)==1 ) 
-    {
-        for [s, g] in points {
-            if v <= s && s <= w {
-                points_swapped_here.push( [*s,*g] );
-            } else {
-                let idx = graph.next_vertices[essential_vertex]
-                    .iter()
-                    .take_while(|t| s<t )
-                    .enumerate()
-                    .last().unwrap().0; // ToDo: Change this to binary search
-                
-                stacked_points[idx] += 1;
-            }
-        } 
+    for next_essential_vertex in graph.next_essential_vertices[essential_vertex] {
+        motions.compose( path_at_essential_vertex_dyn(next_essential_vertex, points, graph) );
     }
 
-    // Those points swapped here that are added in the previous for-loop must disrespect the order to come down to the stem,
-    // so add the motion to the 'path'.
     
 
-    let swapping_at_this_vertex = swap_at::<N>(essential_vertex, &mut points_swapped_here, &stacked_points, graph);
-
-    debug
+    motions
 }
 
-fn swap_at<const N: usize>(essential_vertex: usize, points_swapped_here: &mut [[usize;2]], stacked_points: &[usize], graph: &GraphInformation) -> Vec<MorseCube<N, 1>> {
-    let n_branch = stacked_points.len();
-    let mut swappings = Vec::new();
+fn sort_points_in_stem<const N: usize>(essential_vertex: usize, points: &mut [[usize;2]; N], graph: &GraphInformation) -> Vec<MorseCube<N>> {
+    let mut motions = Vec::new();
 
-    let mut evacuation_branch = false;
+    // 'next_branch' is the smallest vertex that is greater than any child vertices of essential vertex.
+    let next_branch = {
+        let prev_essential_vertex = (0..essential_vertex).rev()
+            .find(|&idx| graph.degree_in_maximal_tree(idx) != 2 )
+            .unwrap();
+        if prev_essential_vertex == 0 {
+            0
+        } else {
+            *graph.next_vertices[prev_essential_vertex].iter().find(|&v| v > &essential_vertex).unwrap_or(&usize::MAX)
+        }
+    };
+    
+    let mut points_in_stem_idx = (0..essential_vertex).rev()
+        .take_while(|&i| graph.degree_in_maximal_tree(i)!=2 )
+        .filter(|i| points.binary_search_by_key(i, |p| p[0] ).is_ok() )
+        .collect::<Vec<_>>();
+
+
+    let is_travelling = |idx: usize| -> bool {
+        points[idx][1] <= essential_vertex || points[idx][1] >= next_branch
+    };
+
+    let cmp = |idx1: usize, idx2: usize| -> Ordering {
+        if is_travelling(idx1) && !is_travelling(idx2) {
+            Ordering::Less
+        } else if !is_travelling(idx1) && is_travelling(idx2) {
+            Ordering::Greater
+        } else {
+            // otherwise the ordering is determined by the goal vertex
+            points[idx1][1].cmp( &points[idx2][1] )
+        }
+    };
+
+    let needs_swapping = |idx: usize| -> bool {
+        (0..idx).filter(|&i| !is_travelling(i))
+            .filter(|&i| points[i][1] > points[idx][1] )
+            .any(|i| 
+                // the folloing expression returns true if the goal of 'i' and the goal 'idx' belongs to the same branch
+                graph.next_vertices[i]
+                    .iter()
+                    .zip( graph.next_vertices[i].iter().skip(1).chain(&[next_branch])) 
+                    .any( |(&i, &j)| (i..j).contains(&points[i][1]) && (i..j).contains(&points[idx][1]) )
+            )
+    };
     
 
-    swappings
+    // The base case: if 'points_in_stem' are already sorted, then return.
+    if points_in_stem_idx.iter()
+        .zip(points_in_stem_idx.iter().skip(1))
+        .all(|(&i, &j)| cmp(i, j) == Ordering::Less ) 
+    {
+        return motions;
+    }
+
+
+    while !points_in_stem_idx.is_empty() && !needs_swapping( *points_in_stem_idx.last().unwrap()) {
+        let idx = points_in_stem_idx.pop().unwrap();
+        let branch = *graph.next_vertices[essential_vertex].iter()
+            .take_while(|&&i| i < points[idx][1] )
+            .last().unwrap();
+
+        // compute the motion and record it.
+        motions.push( push::<true, N>([essential_vertex, branch], idx, points) );
+    }
+
+    // Having processed the trivial moves, do the swapping at the essential vertex (only once)
+    let n_branches = graph.next_vertices[essential_vertex].len();
+    let chunks = {
+        let mut cuts = points_in_stem_idx.iter().rev().skip(1)
+            .zip( points_in_stem_idx.iter().rev() )
+            .filter(|(&x, &y)| cmp(x, y) == Ordering::Greater )
+            .map(|(&x,_)| x )
+            .take(n_branches)
+            .collect::<Vec<_>>();
+        cuts.reverse();
+        cuts.push(usize::MAX);
+        cuts.iter().zip(cuts.iter().skip(1)).map(|(&x, &y)| x..y ).collect::<Vec<_>>()
+    };
+    debug_assert!(chunks.len() <= n_branches);
+
+    // push all the points to above the essential vertex
+    for (&chunk, &next_vertex) in chunks.iter().rev().zip(graph.next_vertices[essential_vertex].iter().rev()) {
+        for i in chunk.into_iter().rev() {
+            push::<true, N>([essential_vertex, next_vertex], points[i][0], points);
+        }
+    }
+
+    let mut falling_points = chunks.iter()
+        .map(|r| r.len() )
+        .enumerate()
+        .map(|(i, l)| {
+            let next_vertex = graph.next_vertices[essential_vertex][i];
+            (next_vertex..next_vertex+l, next_vertex)
+        })
+        .map(|(mut r, next_vertex)| (r.next().unwrap(), r, next_vertex) )
+        .collect::<Vec<_>>();
+
+    falling_points.sort_by(|(v,_,_), (w,_,_)| {
+        let idx1 = points.binary_search_by_key(v, |[s,_]| *s ).unwrap();
+        let idx2 = points.binary_search_by_key(w, |[s,_]| *s ).unwrap();
+        cmp(idx1, idx2) 
+    });
+
+    while !falling_points.is_empty() {
+        let (v, iter, next_vertex) = falling_points.first_mut().unwrap();
+        let idx = points.binary_search_by_key(v, |[s,_]| *s ).unwrap();
+        motions.push( push([*next_vertex, essential_vertex], idx, points));
+        if let Some(w) = iter.next() {
+            *v = w;
+
+            // sort the 'falling_points' again.
+            // ToDo: This sort can be more efficient.
+            falling_points.sort_by(|(v,_,_), (w,_,_)| {
+                let idx1 = points.binary_search_by_key(v, |[s,_]| *s ).unwrap();
+                let idx2 = points.binary_search_by_key(w, |[s,_]| *s ).unwrap();
+                cmp(idx1, idx2) 
+            });
+        } else {
+            // if 'iter.next()' return 'None', then remove the tuple from 'falling_points'.
+            falling_points.remove(0);
+        }
+    }
+
+    motions.append( &mut sort_points_in_stem(essential_vertex, points, graph) );
+
+    motions
+}
+
+
+// This function takes a point by 'idx: usize' and its motion by '[usize; 2]' and computes the motion'.
+fn push<const UPWARD: bool, const N: usize>( edge: [usize; 2], idx: usize, points: &mut [[usize; 2]; N] ) -> MorseCube<N> {
+    let terminal = edge[1];
+
+    // if 'terminal' is occupied by another point, then push them, and make some space.
+    if let Ok(i) = points.binary_search_by_key(&terminal, |[s,_]| *s ) {
+        let last_idx = if UPWARD {
+            (terminal+1..).zip(i+1..).find(|&(v,j)| v != points[j][0] ).unwrap().1
+        } else {
+            (0..terminal).rev().zip((0..i).rev()).find(|&(v,j)| v != points[j][0] ).unwrap().1
+        };
+
+        if UPWARD {
+            for j in i..last_idx { points[j][0] += 1; } 
+        } else {
+            for j in last_idx+1..=i { points[j][0] -= 1; }
+        }
+    }
+
+
+    // create the motion
+    let vertices: SortedArray<N, usize> = points.iter()
+        .map(|&[s,_]| s )
+        .filter(|&s| s!=points[idx][0])
+        .collect::<Vec<_>>()
+        .try_into().unwrap();
+    debug_assert!(vertices.len() == N-1);
+
+    let edges: SortedArray<N, [usize; 2]> = [edge].into();
+
+    let motion = MorseCube::new_unchecked(edges, vertices);
+
+
+    // finally, physically move the point
+    points[idx][0] = terminal;
+    points.sort(); // ToDo: This can be more efficient
+
+    motion
 }
 
 struct UsizeIndexable<T>(Vec<(usize, T)>);
