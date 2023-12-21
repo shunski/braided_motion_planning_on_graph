@@ -8,3 +8,4 @@ edition = "2021"
 topo_spaces = {path = "../toppo/topo_spaces"}
 alg = {path = "../toppo/alg"}
 plotters = "*"
+quasi_iter = "*"

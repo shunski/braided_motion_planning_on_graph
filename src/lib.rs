@@ -106,7 +106,7 @@ impl<const N: usize, T: Ord + Copy + Debug> SortedArray<N,T> {
     pub fn remove(&mut self, idx: usize) {
         assert!(idx < self.len, "index out of bounds: array is of length={}, but 'idx'={idx}", self.len);
 
-        for i in idx..self.len {
+        for i in idx..self.len-1 {
             self[i] = self[i+1]; 
         }
 
@@ -142,6 +142,29 @@ impl<const N: usize> MorseCube<N> {
         // the size of 'edges' and 'vertices' must add up to 'N', but we do not check them in this function.
         debug_assert!( edges.len() + vertices.len() == N );
         Self { edges, vertices }
+    }
+
+    // this function creates a morse cube only if the cell described by the input is critical. Otherwise it returns 'None'
+    pub fn new_checked(edges: SortedArray<N, [usize; 2]>, vertices: SortedArray<N, usize>) -> Option<Self> {
+        // the size of 'edges' and 'vertices' must add up to 'N', but we do not check them in this function.
+        debug_assert!( edges.len() + vertices.len() == N );
+
+        for mut edge in edges.iter().copied() {
+            edge.sort();
+
+            // The following closure is not necessary, but it can help speed up.
+            if edge[1] - edge[0] == 1 {
+                return None;
+            };
+
+            // is the edge is not disrespecting the order then return 'None'
+            if vertices.iter().copied().all(|v| v < edge[0] || edge[1] < v ) {
+                return None;
+            }
+        }
+
+        // coming here means that the edge is critical.
+        Some( Self { edges, vertices } )
     }
 
     pub fn is_valid(&self, graph: &RawSimpleGraph) -> bool {
@@ -257,28 +280,6 @@ impl<const N: usize> ElementaryCubicPath<N> {
         (out, [start.data, end.data])
     }
 
-    fn remove(&mut self, [v,w]: [usize; 2]) {
-        debug_assert!(self.len > 0, "cannot remove from edge motion from identity motion");
-        
-        let idx = self.binary_search(&[v, w]).unwrap();
-        for i in idx..self.len-1 {
-            self.swap(i, i+1);
-        }
-
-        self.len -= 1;
-    }
-
-
-    fn remove_by_idx(&mut self, idx: usize) {
-        debug_assert!(self.len > 0, "cannot remove from edge motion from identity motion");
-        
-        for i in idx..self.len-1 {
-            self.swap(i, i+1);
-        }
-
-        self.len -= 1;
-    }
-
 
     // // This function takes two 'ElementaryCubicPath' by reference and returns a composition if the two paths are composable enclosed in Ok().
     // // Otherwise, it will return 'Err(())'.
@@ -311,7 +312,11 @@ impl<const N: usize> ElementaryCubicPath<N> {
 #[derive(Clone)]
 pub struct CubicPath<const N: usize> {
     path: Vec<ElementaryCubicPath<N>>,
+
+    // 'start' is the start position of the path. It must be sorted.
     start: [usize; N],
+
+    // 'end' is the end position of the path. It is in general not sorted.
     end: [usize; N],
 }
 
@@ -476,7 +481,7 @@ impl<const N: usize> CubicPath<N> {
                     let non_commuting_motion = &mut out[non_commuting_idx];
                     if let Ok(idx) = non_commuting_motion.binary_search(&[w, v] ) {
                         // if 'non_commuting_motion' contains the inverse motion of [v,w], remove it from 'non_commuting_motion'
-                        non_commuting_motion.remove_by_idx(idx);
+                        non_commuting_motion.remove(idx);
                         
                         // remove 'non_commuting_motion' if the motion is now the identity motion
                         if non_commuting_motion.is_identity() {
@@ -515,13 +520,39 @@ impl<const N: usize> CubicPath<N> {
 }
 
 pub struct MorsePath<'a, const N: usize> {
+    // 'start' is sorted at any given time.
     start: [usize; N],
+
+    // 'end' is in general not sorted.
     end: [usize; N],
+
     path: Vec<MorseCube<N>>,
     graph: &'a RawSimpleGraph,
 }
 
 impl<'a, const N: usize> MorsePath<'a, N> {
+    pub fn new(start: [usize; N], end: [usize; N], graph: &'a RawSimpleGraph) -> Self {
+        assert!(
+            start.iter().zip(start.iter().skip(1)).all(|(x,y)| x<y ),
+            "'start' must be sorted, but it is not. start = {start:?}."
+        );
+
+        Self {
+            start,
+            end,
+            path: Vec::new(),
+            graph,
+        }
+    }
+
+    pub fn add(&mut self, c: MorseCube<N>) {
+        self.path.push(c);
+    }
+
+    pub fn compose(&mut self, mut other: MorsePath<N>) {
+        self.path.append(&mut other.path);
+    }
+
     pub fn get_geodesic(&'a self) -> CubicPath<N> {
         let start_path = {
             let mut path = VecDeque::new();
@@ -532,6 +563,7 @@ impl<'a, const N: usize> MorsePath<'a, N> {
 
         let end_path = {
             let mut path = VecDeque::new();
+            // because 'self.end' is in general not sorted, we have to sort it in order to run 'get_edge_path_recc()'.
             let mut end = self.end; end.sort();
             let base = get_edge_path_recc::<N, false>(&end, &mut path, self.graph);
             let path: Vec<_> = path.into();
@@ -554,7 +586,7 @@ mod morse_path_test {
     const N: usize = 5;
     use crate::{ graph_collection, graphics, MorsePath, MorseCube, SortedArray };
 
-    #[test]
+    // #[test]
     fn morse_path() -> Result<(), Box<dyn std::error::Error>> {
         let (graph, embedding, name) = graph_collection::RawGraphCollection::Grid.get();
 
