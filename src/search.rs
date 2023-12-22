@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 
-use quasi_iter::merge_sorted::merge_sorted_dyn_by_key;
+use quasi_iter::merge_sorted::{merge_sorted_dyn_by_key, merge_sorted_dyn_by, MergeSortedDynBy};
+
 use topo_spaces::graph::RawSimpleGraph;
 
 use crate::{MorsePath, MorseCube, SortedArray};
@@ -33,26 +34,10 @@ pub fn path_in_tree<'a, const N: usize>(points: &mut [[usize; 2]; N], graph: &'a
     let graph = GraphInformation::<'a>::from(graph);
 
     let first_essential_vertex = *graph.next_essential_vertices[0].first().unwrap();
-    path_at_essential_vertex_dyn(first_essential_vertex, points, &graph)
-}
-
-fn path_at_essential_vertex_dyn<'a, 'b, const N: usize>(essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &'b GraphInformation<'a>) -> MorsePath<'a, N> 
-{
-    let (start, end): (Vec<_>, Vec<_>) = points.iter().copied().map(|[x,y]| (x,y) ).unzip();
-    let start = start.try_into().unwrap();
-    let end = end.try_into().unwrap();
-
-    // initialize 'motions', which is the output of this function.
-    let mut motions = MorsePath::<'a, N>::new(start, end, graph.graph_ref);
-    
-    motions.compose( sort_points_in_stem::<N>(essential_vertex, points, graph) );
-
-    for &next_essential_vertex in &graph.next_essential_vertices[essential_vertex] {
-        motions.compose( path_at_essential_vertex_dyn(next_essential_vertex, points, graph) );
-    }
+    let mut motions = path_at_essential_vertex_dyn(first_essential_vertex, points, &graph);
 
     // bring all the points to the basepoint
-    let ordered_iter = collect_sorted_points(*graph.essential_vertices.first().unwrap(), points, graph);
+    let ordered_iter = collect_sorted_points(*graph.essential_vertices.first().unwrap(), points, &graph);
     for (n_stacked_at_basepoint, [mut x, _]) in ordered_iter.enumerate() {
         let vertices = points.iter().map(|[s,_]| *s ).collect::<Vec<_>>().try_into().unwrap();
         while x != n_stacked_at_basepoint {
@@ -71,6 +56,29 @@ fn path_at_essential_vertex_dyn<'a, 'b, const N: usize>(essential_vertex: usize,
     }
 
     motions
+
+
+}
+
+fn path_at_essential_vertex_dyn<'a, 'b, const N: usize>(essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &'b GraphInformation<'a>) -> MorsePath<'a, N> 
+{
+    let (start, end): (Vec<_>, Vec<_>) = points.iter().copied().map(|[x,y]| (x,y) ).unzip();
+    let start = start.try_into().unwrap();
+    let end = end.try_into().unwrap();
+
+    // initialize 'motions', which is the output of this function.
+    let mut motions = MorsePath::<'a, N>::new(start, end, graph.graph_ref);
+    
+    motions.compose( sort_points_in_stem::<N>(essential_vertex, points, graph) );
+
+    for &next_essential_vertex in &graph.next_essential_vertices[essential_vertex] {
+        motions.compose( path_at_essential_vertex_dyn(next_essential_vertex, points, graph) );
+    }
+
+    // Now bring all the travelling points to the stem, and swap them.
+
+
+    motions
 }
 
 fn sort_points_in_stem<'a, const N: usize>(essential_vertex: usize, points: &mut [[usize;2]; N], graph: &'a GraphInformation) -> MorsePath<'a, N> {
@@ -84,122 +92,117 @@ fn sort_points_in_stem<'a, const N: usize>(essential_vertex: usize, points: &mut
         let prev_essential_vertex = (0..essential_vertex).rev()
             .find(|&idx| graph.degree_in_maximal_tree(idx) != 2 )
             .unwrap();
-        if prev_essential_vertex == 0 {
-            0
-        } else {
-            *graph.next_vertices[prev_essential_vertex].iter().find(|&v| v > &essential_vertex).unwrap_or(&usize::MAX)
-        }
-    };
-    
-    let mut points_in_stem_idx = (0..essential_vertex).rev()
-        .take_while(|&i| graph.degree_in_maximal_tree(i)!=2 )
-        .filter(|i| points.binary_search_by_key(i, |p| p[0] ).is_ok() )
-        .collect::<Vec<_>>();
-
-
-    let is_travelling = |idx: usize, points: &[[usize;2];N]| -> bool {
-        points[idx][1] <= essential_vertex || points[idx][1] >= next_branch
+        
+        *graph.next_vertices[prev_essential_vertex].iter().find(|&v| v > &essential_vertex).unwrap_or(&usize::MAX)
     };
 
-    let cmp = |idx1: usize, idx2: usize, points: &[[usize;2];N]| -> Ordering {
-        if is_travelling(idx1, points) && !is_travelling(idx2, points) {
-            Ordering::Less
-        } else if !is_travelling(idx1, points) && is_travelling(idx2, points) {
-            Ordering::Greater
-        } else {
-            // otherwise the ordering is determined by the goal vertex
-            points[idx1][1].cmp( &points[idx2][1] )
-        }
-    };
 
+    // this closure returns 'true' if the swapping has to be done at the current essential vertex.
+    // That is, if this closure returns 'false', then we can simply push this vertex to the next child branch.
     let needs_swapping = |idx: usize, points: &[[usize;2];N]| -> bool {
-        (0..idx).filter(|&i| !is_travelling(i, points))
-            .filter(|&i| points[i][1] > points[idx][1] )
-            .any(|i| 
-                // the folloing expression returns true if the goal of 'i' and the goal 'idx' belongs to the same branch
-                graph.next_vertices[i]
+        (0..idx).filter(|&i| cmp(i, idx, points).is_gt())
+            .any(|i|
+                // the following expression returns ture if 
+                // (1) 'points[idx]' is travelling (this automatically implies 'points[i]' is also travelling), or if
+                is_travelling(idx, points)
+                ||
+                // (2) the following expression returns true if the goal of 'i' and the goal 'idx' belong to the same child branch
+                graph.next_vertices[essential_vertex]
                     .iter()
-                    .zip( graph.next_vertices[i].iter().skip(1).chain(&[next_branch])) 
-                    .any( |(&i, &j)| (i..j).contains(&points[i][1]) && (i..j).contains(&points[idx][1]) )
+                    .zip( graph.next_vertices[essential_vertex].iter().skip(1).chain(&[next_branch])) 
+                    .any( |(&a, &b)| (a..b).contains(&points[i][1]) && (a..b).contains(&points[idx][1]) )
             )
     };
+
+
+    // 'points_in_stem_idx' is the points located at vertices smaller than or equal to the current essential vertex and 
+    // larger than the previous essential vertex of valency greater than 3 or greater than or equal to the previous
+    // essential vertex of valency 1.
+    let mut points_in_stem_idx = (0..=essential_vertex).rev()
+        .take_while(|&i| i==essential_vertex || graph.degree_in_maximal_tree(i) <= 2 )
+        .filter_map(|i| points.binary_search_by_key(&i, |p| p[0] ).ok() )
+        .collect::<Vec<_>>();
+    points_in_stem_idx.reverse();
     
 
-    // The base case: if 'points_in_stem' are already sorted, then return.
-    if points_in_stem_idx.iter()
-        .zip(points_in_stem_idx.iter().skip(1))
-        .all(|(&i, &j)| cmp(i, j, points) == Ordering::Less ) 
-    {
-        return motions;
-    }
+    println!("points_in_stem_idx={points_in_stem_idx:?}");
 
-
-    while !points_in_stem_idx.is_empty() && !needs_swapping( *points_in_stem_idx.last().unwrap(), points) {
+    while !points_in_stem_idx.is_empty() && !needs_swapping( *points_in_stem_idx.last().unwrap(), points) && !is_travelling( *points_in_stem_idx.last().unwrap(), points) {
         let idx = points_in_stem_idx.pop().unwrap();
         let branch = *graph.next_vertices[essential_vertex].iter()
-            .take_while(|&&i| i < points[idx][1] )
+            .take_while(|&&i| i <= points[idx][1] )
             .last().unwrap();
 
         // compute the motion and record it.
         motions.add( push::<true, N>([essential_vertex, branch], idx, points) );
     }
 
+
+    // The base case: if 'points_in_stem' is already sorted and if all such points are travelling, then return.
+    if points_in_stem_idx.iter()
+        .zip(points_in_stem_idx.iter().skip(1))
+        .all(|(&i, &j)| cmp(i, j, points).is_lt() ) 
+        &&
+        points_in_stem_idx.iter().all(|&i| is_travelling(i, points) )
+    {
+        return motions;
+    }
+
     // Having processed the trivial moves, do the swapping at the essential vertex (only once)
     let n_branches = graph.next_vertices[essential_vertex].len();
-    let chunks = {
+    let swapping_chunks = {
         let mut cuts = points_in_stem_idx.iter().rev().skip(1)
             .zip( points_in_stem_idx.iter().rev() )
-            .filter(|(&x, &y)| cmp(x, y, points) == Ordering::Greater )
-            .map(|(&x,_)| x )
+            .filter(|(&x, &y)| cmp(x, y, points).is_gt() )
+            .map(|(_,&y)| y )
             .take(n_branches)
             .collect::<Vec<_>>();
+        
+        if cuts.len() < n_branches {
+            cuts.push(0);
+        }
         cuts.reverse();
-        cuts.push(usize::MAX);
+        cuts.push( points_in_stem_idx.len() );
         cuts.iter().zip(cuts.iter().skip(1)).map(|(&x, &y)| x..y ).collect::<Vec<_>>()
     };
-    debug_assert!(chunks.len() <= n_branches);
+    debug_assert!( 1 < swapping_chunks.len() && swapping_chunks.len() <= n_branches, "swapping_chunks={swapping_chunks:?}" );
+    debug_assert!(
+        swapping_chunks.clone().into_iter().all(|chunk| chunk.end == points_in_stem_idx.len() || cmp(chunk.end-1, chunk.end, points).is_gt() ),
+        "swapping_chunks={swapping_chunks:?}, and points are {:?}",
+        points_in_stem_idx.iter().map(|&idx| points[idx] ).collect::<Vec<_>>()
+    );
+    debug_assert!( !(swapping_chunks.len() < n_branches) || swapping_chunks[0].end == 0 );
 
     // push all the points to above the essential vertex
-    for (chunk, &next_vertex) in chunks.iter().rev().zip(graph.next_vertices[essential_vertex].iter().rev()) {
+    for (chunk, &next_vertex) in swapping_chunks.iter().rev().zip(graph.next_vertices[essential_vertex][..swapping_chunks.len()].iter().rev()) {
         for i in chunk.clone().into_iter().rev() {
-            push::<true, N>([essential_vertex, next_vertex], points[i][0], points);
+            push::<true, N>([essential_vertex, next_vertex], i, points);
         }
     }
 
-    let mut falling_points = chunks.iter()
-        .map(|r| r.len() )
-        .enumerate()
-        .map(|(i, l)| {
-            let next_vertex = graph.next_vertices[essential_vertex][i];
-            (next_vertex..next_vertex+l, next_vertex)
-        })
-        .map(|(mut r, next_vertex)| (r.next().unwrap(), r, next_vertex) )
-        .collect::<Vec<_>>();
+    let curr_points = points.clone();
 
-    falling_points.sort_by(|(v,_,_), (w,_,_)| {
-        let idx1 = points.binary_search_by_key(v, |[s,_]| *s ).unwrap();
-        let idx2 = points.binary_search_by_key(w, |[s,_]| *s ).unwrap();
-        cmp(idx1, idx2, points) 
-    });
+    let falling_points: MergeSortedDynBy<usize, _> = merge_sorted_dyn_by(
+        swapping_chunks.iter()
+            .map(|r| r.len() )
+            .enumerate()
+            .map(|(i, l)| {
+                let next_vertex = graph.next_vertices[essential_vertex][i];
+                let out: Box::<dyn Iterator<Item=usize>> = Box::new(next_vertex..next_vertex+l);
+                out
+            }),
+            |v, w| {
+                let idx1 = curr_points.binary_search_by_key(v, |[s,_]| *s ).unwrap();
+                let idx2 = curr_points.binary_search_by_key(w, |[s,_]| *s ).unwrap();
+                cmp(idx1, idx2, &curr_points)
+            }
+    );
 
-    while !falling_points.is_empty() {
-        let (v, iter, next_vertex) = falling_points.first_mut().unwrap();
-        let idx = points.binary_search_by_key(v, |[s,_]| *s ).unwrap();
-        motions.add( push::<false, N>([*next_vertex, essential_vertex], idx, points));
-        if let Some(w) = iter.next() {
-            *v = w;
-
-            // sort the 'falling_points' again.
-            // ToDo: This sort can be more efficient.
-            falling_points.sort_by(|(v,_,_), (w,_,_)| {
-                let idx1 = points.binary_search_by_key(v, |[s,_]| *s ).unwrap();
-                let idx2 = points.binary_search_by_key(w, |[s,_]| *s ).unwrap();
-                cmp(idx1, idx2, points) 
-            });
-        } else {
-            // if 'iter.next()' return 'None', then remove the tuple from 'falling_points'.
-            falling_points.remove(0);
-        }
+    for v in falling_points {
+        let edge_initial = *graph.next_vertices[essential_vertex].iter().take_while(|&&w| w <= v ).last().unwrap(); // ToDo: use binary search here
+        
+        let idx = points.binary_search_by_key(&v, |[s,_]| *s ).unwrap();
+        motions.add( push::<false, N>([edge_initial, essential_vertex], idx, points));
     }
 
     motions.compose( sort_points_in_stem(essential_vertex, points, graph) );
@@ -208,22 +211,39 @@ fn sort_points_in_stem<'a, const N: usize>(essential_vertex: usize, points: &mut
 }
 
 
-// This function takes a point by 'idx: usize' and its motion by '[usize; 2]' and computes the motion'.
+fn is_travelling<const FORWARD: bool>(idx: usize, points: &[[usize;2];N]) -> bool {
+    points[idx][1] <= essential_vertex || points[idx][1] >= next_branch
+};
+
+fn cmp<const FORWARD: bool>(idx1: usize, idx2: usize, points: &[[usize;2];N]) -> Ordering {
+    if is_travelling(idx1, points) && !is_travelling(idx2, points) {
+        Ordering::Less
+    } else if !is_travelling(idx1, points) && is_travelling(idx2, points) {
+        Ordering::Greater
+    } else {
+        // otherwise the ordering is determined by the goal vertex
+        points[idx1][1].cmp( &points[idx2][1] )
+    }
+};
+
+
+// This function takes a point by 'idx: usize' and its motion by 'edge: [usize; 2]' and computes the motion'.
 fn push<const UPWARD: bool, const N: usize>( edge: [usize; 2], idx: usize, points: &mut [[usize; 2]; N] ) -> MorseCube<N> {
+    println!("pushing along {edge:?}");
     let terminal = edge[1];
 
     // if 'terminal' is occupied by another point, then push them, and make some space.
     if let Ok(i) = points.binary_search_by_key(&terminal, |[s,_]| *s ) {
         let last_idx = if UPWARD {
-            (terminal+1..).zip(i+1..).find(|&(v,j)| v != points[j][0] ).unwrap().1
+            (terminal+1..).zip(i+1..).find(|&(v,j)| j==points.len() || v != points[j][0] ).unwrap().1
         } else {
-            (0..terminal).rev().zip((0..i).rev()).find(|&(v,j)| v != points[j][0] ).unwrap().1
+            (0..=terminal).rev().zip((0..=i).rev()).take_while(|&(v,j)| v == points[j][0] ).last().unwrap().1
         };
 
         if UPWARD {
             for j in i..last_idx { points[j][0] += 1; } 
         } else {
-            for j in last_idx+1..=i { points[j][0] -= 1; }
+            for j in last_idx..=i { points[j][0] -= 1; }
         }
     }
 
@@ -334,7 +354,7 @@ impl<'a> GraphInformation<'a> {
 #[cfg(test)]
 mod path_generation_on_tree_tests {
     // 'N' is the number of robots
-    const N: usize = 5;
+    const N: usize = 6;
     use crate::{ graph_collection, graphics, search::GraphInformation };
 
     #[test]
@@ -342,7 +362,7 @@ mod path_generation_on_tree_tests {
         let (graph, embedding, name) = graph_collection::RawGraphCollection::Grid.get();
         let graph = GraphInformation::from(&graph);
 
-        let mut points = [[0,5], [16,20], [17,19], [21,21], [49,49]];
+        let mut points = [[0,5], [16,20], [17,19], [20,6], [21,21], [49,49]];
 
         let morse_path = super::sort_points_in_stem(20, &mut points, &graph);
 

@@ -12,22 +12,32 @@ pub mod search;
 pub mod operators;
 
 
-#[derive(Clone, Copy)]
-pub struct SortedArray<const N: usize, T: Ord> {
+#[derive(Copy)]
+pub struct SortedArray<const N: usize, T: Ord + Debug> {
     data: [T; N],
     len: usize,
 }
 
-impl<const N: usize, T: Ord + Copy> SortedArray<N, T> {}
+impl<const N: usize, T: Ord + Copy + Debug> SortedArray<N, T> {}
 
-impl<const N: usize, T: Ord + Copy> std::ops::Deref for SortedArray<N, T> {
+impl<const N: usize, T: Ord + Copy + Debug> std::ops::Deref for SortedArray<N, T> {
     type Target = [T];
     fn deref(&self) -> &Self::Target {
         &self.data[..self.len]
     }
 }
 
-impl<const N: usize, T: Ord + Copy> std::ops::DerefMut for SortedArray<N, T> {
+impl<const N: usize, T: Ord + Copy + Debug> Clone for SortedArray<N,T> {
+    fn clone(&self) -> Self {
+        let mut out = Self::new();
+        for &x in self.iter() {
+            out.add_without_sort(x);
+        }
+        out
+    }
+}
+
+impl<const N: usize, T: Ord + Copy + Debug> std::ops::DerefMut for SortedArray<N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.data[..self.len]
     }
@@ -56,18 +66,18 @@ impl<const N: usize, const M: usize, T: Ord + Copy + Debug> From<[T; M]> for Sor
 impl<const N: usize, T: Ord + Copy + Debug> TryFrom<Vec<T>> for SortedArray<N, T> {
     type Error = Self;
     // if 'value.len() > N', then this function creates an array of 'N' elements that contains first 'N' elements of 'value',
-    // and enclose it in 'Err'
+    // and encloses it in 'Err'
     fn try_from(mut value: Vec<T>) -> Result<Self, Self::Error> {
         value.sort();
-        let mut out = Self::new();
         let is_error = value.len() > N;
+        let mut out = Self::new();
         for x in value.into_iter().take(N) {
             out.add_without_sort(x);
         }
         if is_error {
-            Ok(out)
-        } else {
             Err(out)
+        } else {
+            Ok(out)
         }
     }
 }
@@ -89,7 +99,10 @@ impl<const N: usize, T: Ord + Copy + Debug> SortedArray<N,T> {
         }
 
         self.len+=1;
-        debug_assert!(self.iter().zip(self.iter().skip(1)).all(|(x,y)| x<y ))
+        debug_assert!(
+            self.iter().zip(self.iter().skip(1)).all(|(x,y)| x<y ),
+            "self={self:?} is not sorted."
+        );
     }
 
     pub fn add(&mut self, v: T) {
@@ -497,9 +510,6 @@ impl<const N: usize> CubicPath<N> {
                     }
                 } else {
                     // if '[v,w]' commutes with every motion in 'out', then insert the motion at the front.
-                    if [v, w] == [85,86] {
-                        println!("out={out:?}");
-                    }
                     out[0].add([v,w]);
                 }
             }
@@ -569,9 +579,6 @@ impl<'a, const N: usize> MorsePath<'a, N> {
             let path: Vec<_> = path.into();
             CubicPath{ path, start: base, end }
         };
-
-        println!("start_path={start_path:?}");
-        println!("end_path={end_path:?}");
 
         self.path.iter().map(|cell| cell.get_edge_path(self.graph) )
             .chain(std::iter::once(end_path))
