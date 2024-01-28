@@ -116,14 +116,16 @@ impl<const N: usize, T: Ord + Copy + Debug> SortedArray<N,T> {
         self.sort(); // ToDo: This can be more efficient
     }
 
-    pub fn remove(&mut self, idx: usize) {
+    pub fn remove(&mut self, idx: usize) -> T {
         assert!(idx < self.len, "index out of bounds: array is of length={}, but 'idx'={idx}", self.len);
 
+        let out = self[idx];
         for i in idx..self.len-1 {
             self[i] = self[i+1]; 
         }
 
         self.len -= 1;
+        out
     }
 
     fn into_iter(self) -> impl Iterator<Item = T> { 

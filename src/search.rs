@@ -30,15 +30,19 @@ fn get_next_vertices(essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<usi
 }
 
 
+
+// The main algorithm that computes the path 
 pub fn path_in_tree<'a, const N: usize>(points: &mut [[usize; 2]; N], graph: &'a RawSimpleGraph) -> MorsePath<'a, N> {
     let graph = GraphInformation::<'a>::from(graph);
 
+
+    // the dynamic programming and recursively sort the points in the graph at each essential vertices.
     let first_essential_vertex = *graph.next_essential_vertices[0].first().unwrap();
     let mut motions = path_at_essential_vertex_dyn(first_essential_vertex, points, &graph);
 
     // bring all the points to the basepoint
-    let ordered_iter = collect_sorted_points(*graph.essential_vertices.first().unwrap(), points, &graph);
-    for (n_stacked_at_basepoint, [mut x, _]) in ordered_iter.enumerate() {
+    let sorted_iter = collect_sorted_points(*graph.essential_vertices.first().unwrap(), points, &graph);
+    for (n_stacked_at_basepoint, [mut x, _]) in sorted_iter.enumerate() {
         let vertices = points.iter().map(|[s,_]| *s ).collect::<Vec<_>>().try_into().unwrap();
         while x != n_stacked_at_basepoint {
             // let 'x' flow by one step.
@@ -60,23 +64,30 @@ pub fn path_in_tree<'a, const N: usize>(points: &mut [[usize; 2]; N], graph: &'a
 
 }
 
-fn path_at_essential_vertex_dyn<'a, 'b, const N: usize>(essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &'b GraphInformation<'a>) -> MorsePath<'a, N> 
+
+// 'fn path_at_essential_vertex_dyn' implements the definition of the dynamic programming.
+fn path_at_essential_vertex_dyn<'a, 'b, const N: usize>(
+    essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &'b GraphInformation<'a>
+) -> MorsePath<'a, N>
 {
+    // initialize 'motions', which is the output of this function.
     let (start, end): (Vec<_>, Vec<_>) = points.iter().copied().map(|[x,y]| (x,y) ).unzip();
     let start = start.try_into().unwrap();
     let end = end.try_into().unwrap();
-
-    // initialize 'motions', which is the output of this function.
     let mut motions = MorsePath::<'a, N>::new(start, end, graph.graph_ref);
-    
+
+    // sort the points in stem so that all travelling points stay in the stem (but not necessarily sorted)
+    // and that all the returning points are pushed to the child branches.
     motions.compose( sort_points_in_stem::<N, true>(essential_vertex, points, graph) );
 
+    // Sort the travelling points in the stem and send those travelling points that need to be sorted to the child branches.
+    motions.compose( sort_travelling_points::<N, true>(essential_vertex, points, graph) );
+    
+    
+    // recursively run the the algorithm in the child branches.
     for &next_essential_vertex in &graph.next_essential_vertices[essential_vertex] {
         motions.compose( path_at_essential_vertex_dyn(next_essential_vertex, points, graph) );
     }
-
-    // Now bring all the travelling points to the stem, and swap them.
-    motions.compose( sort_travelling_points::<N, true>(essential_vertex, points, graph) );
 
     motions
 }
@@ -226,7 +237,7 @@ fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex
 }
 
 
-// This function takes a point by 'idx: usize' and its motion by 'edge: [usize; 2]' and computes the motion.
+// This function takes a point by 'idx: usize' and its motion by 'edge: [usize; 2]' and computes the "push" motion.
 fn push<const UPWARD: bool, const N: usize>( edge: [usize; 2], idx: usize, points: &mut [[usize; 2]; N] ) -> MorseCube<N> {
     println!("pushing along {edge:?}");
     let terminal = edge[1];
@@ -267,12 +278,31 @@ fn push<const UPWARD: bool, const N: usize>( edge: [usize; 2], idx: usize, point
     motion
 }
 
+
+// 'fn sort_travelling_points' sorts points in the stem, and send those points that need to be sorted
+// in the child branches to the child branches.
+// This function requires that each point in 'points' inside the stem needs to be a travelling point. 
 fn sort_travelling_points<'a, const N: usize, const FORWARD: bool>( essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &'a GraphInformation ) -> MorsePath<'a, N> {
+    // initialize 'motions', which is the return value of this function.
     let start = points.iter().map(|&[s,_]| s).collect::<Vec<_>>().try_into().unwrap();
     let end = points.iter().map(|&[_,g]| g).collect::<Vec<_>>().try_into().unwrap();
-    
     let mut motions = MorsePath::new(start, end, &graph);
     
+    // 'next_branch' is the smallest vertex that is greater than any child vertices of the essential vertex.
+    let next_branch = {
+        let prev_essential_vertex = (0..essential_vertex).rev()
+            .find(|&idx| graph.degree_in_maximal_tree(idx) != 2 )
+            .unwrap();
+        
+        *graph.next_vertices[prev_essential_vertex].iter().find(|&v| v > &essential_vertex).unwrap_or(&usize::MAX)
+    };
+
+    // find the point in the subtree that has the .
+    let smallest_pt_idx = {
+        
+    };
+    
+    // collect the points in stem.
     let points_in_stem_idx = (0..=essential_vertex).rev()
         .take_while(|&i| i==essential_vertex || graph.degree_in_maximal_tree(i) <= 2 )
         .filter_map(|i| points.binary_search_by_key(&i, |p| p[0] ).ok() )
@@ -282,15 +312,6 @@ fn sort_travelling_points<'a, const N: usize, const FORWARD: bool>( essential_ve
     if points_in_stem_idx.is_empty() {
         return MorsePath::new(start, end, graph);
     }
-
-    // 'next_branch' is the smallest vertex that is greater than any child vertices of the essential vertex.
-    let next_branch = {
-        let prev_essential_vertex = (0..essential_vertex).rev()
-            .find(|&idx| graph.degree_in_maximal_tree(idx) != 2 )
-            .unwrap();
-        
-        *graph.next_vertices[prev_essential_vertex].iter().find(|&v| v > &essential_vertex).unwrap_or(&usize::MAX)
-    };
 
     // if there is a vacant branch, then push as many points in stem toward the branch and return.
     if let Some((&vacant_branch, _)) = graph.next_vertices[essential_vertex].iter()
@@ -307,7 +328,7 @@ fn sort_travelling_points<'a, const N: usize, const FORWARD: bool>( essential_ve
     // otherwise, we simply sort the points using 'essential_vertex'.
     let max_p = points[*points_in_stem_idx.last().unwrap()];
     let iter = graph.next_vertices[essential_vertex].iter()
-        .map(|v|
+        .map( |v|
             (v..).filter_map(|x|  )
         );
 
@@ -334,7 +355,13 @@ fn collect_sorted_points<const N: usize>(essential_vertex: usize, points: &[[usi
     Box::new(
         points_in_stem.into_iter().chain( next_iters_merged )
     )
+}
 
+
+// 'fn cmp' determines order among points during the algorithm. The order changes whether we are computing the forward path
+//  or the backward path. 
+fn cmp<const FORWARD: bool>(p: &[usize; 2], q: &[usize; 2]) -> Ordering {
+    s
 }
 
 struct UsizeIndexable<T>(Vec<(usize, T)>);
