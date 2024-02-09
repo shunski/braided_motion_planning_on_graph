@@ -1,39 +1,13 @@
 use std::cmp::Ordering;
 
 use quasi_iter::merge_sorted::{merge_sorted_dyn_by_key, merge_sorted_dyn_by, MergeSortedDynBy};
-
 use topo_spaces::graph::RawSimpleGraph;
-
+use crate::augmented_graph::AugmentedGraph;
 use crate::{MorsePath, MorseCube, SortedArray};
-
-fn get_next_essential_vertices(essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<usize> {
-    let mut out = Vec::new();
-    for mut v in graph.adjacent_vertices_iter(essential_vertex)
-        .skip(1)
-        .filter(|&v| v > essential_vertex)
-        .filter(|&v| graph.maximal_tree_contains( [essential_vertex, v] )) {
-        while graph.degree_in_maximal_tree(v) == 2 {
-            v += 1;
-        }
-
-        out.push(v);
-    }
-    out
-}
-
-fn get_next_vertices(essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<usize> {
-    graph.adjacent_vertices_iter(essential_vertex)
-        .skip(1)
-        .filter(|&v| v > essential_vertex)
-        .filter(|&v| graph.maximal_tree_contains( [essential_vertex, v] ))
-        .collect::<Vec<_>>()
-}
-
-
 
 // The main algorithm that computes the path 
 pub fn path_in_tree<'a, const N: usize>(points: &mut [[usize; 2]; N], graph: &'a RawSimpleGraph) -> MorsePath<'a, N> {
-    let graph = GraphInformation::<'a>::from(graph);
+    let graph = AugmentedGraph::<'a>::from(graph);
 
 
     // the dynamic programming and recursively sort the points in the graph at each essential vertices.
@@ -60,14 +34,12 @@ pub fn path_in_tree<'a, const N: usize>(points: &mut [[usize; 2]; N], graph: &'a
     }
 
     motions
-
-
 }
 
 
 // 'fn path_at_essential_vertex_dyn' implements the definition of the dynamic programming.
 fn path_at_essential_vertex_dyn<'a, 'b, const N: usize>(
-    essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &'b GraphInformation<'a>
+    essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &'b AugmentedGraph<'a>
 ) -> MorsePath<'a, N>
 {
     // initialize 'motions', which is the output of this function.
@@ -92,45 +64,26 @@ fn path_at_essential_vertex_dyn<'a, 'b, const N: usize>(
     motions
 }
 
-fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex: usize, points: &mut [[usize;2]; N], graph: &'a GraphInformation) -> MorsePath<'a, N> {
+fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex: usize, points: &mut [[usize;2]; N], graph: &'a AugmentedGraph) -> MorsePath<'a, N> {
     let (start, end): (Vec<_>, Vec<_>) = points.iter().copied().map(|[x,y]| (x,y) ).unzip();
     let start = start.try_into().unwrap();
     let end = end.try_into().unwrap();
     let mut motions: MorsePath<'_, N> = MorsePath::new(start, end, graph);
 
     // 'next_branch' is the smallest vertex that is greater than any child vertices of the essential vertex.
-    let next_branch = {
-        let prev_essential_vertex = (0..essential_vertex).rev()
-            .find(|&idx| graph.degree_in_maximal_tree(idx) != 2 )
-            .unwrap();
-        
-        *graph.next_vertices[prev_essential_vertex].iter().find(|&v| v > &essential_vertex).unwrap_or(&usize::MAX)
-    };
-
-    let is_travelling = |idx: usize, points: &[[usize;2]; N]| -> bool {
-        points[idx][if FORWARD{1} else {0}] <= essential_vertex || points[idx][if FORWARD {1} else {0}] >= next_branch
-    };
-    
-    let cmp = |idx1: usize, idx2: usize, points: &[[usize;2];N]| -> Ordering {
-        if is_travelling(idx1, points) && !is_travelling(idx2, points) {
-            Ordering::Less
-        } else if !is_travelling(idx1, points) && is_travelling(idx2, points) {
-            Ordering::Greater
-        } else {
-            // otherwise the ordering is determined by the goal vertex
-            points[idx1][1].cmp( &points[idx2][1] )
-        }
-    };
+    let next_branch = *graph.next_vertices[graph.parent[essential_vertex]].iter()
+        .find(|&&v| v>essential_vertex)
+        .unwrap_or(&usize::MAX);
 
 
     // this closure returns 'true' if the swapping has to be done at the current essential vertex.
     // That is, if this closure returns 'false', then we can simply push this vertex to the next child branch.
     let needs_swapping = |idx: usize, points: &[[usize;2];N]| -> bool {
-        (0..idx).filter(|&i| cmp(i, idx, points).is_gt())
+        (0..idx).filter(|&i| local_cmp(i, idx, points, essential_vertex, graph).is_gt())
             .any(|i|
                 // the following expression returns ture if 
                 // (1) 'points[idx]' is travelling (this automatically implies 'points[i]' is also travelling), or if
-                is_travelling(idx, points)
+                is_travelling(idx, points, essential_vertex, graph)
                 ||
                 // (2) the following expression returns true if the goal of 'i' and the goal 'idx' belong to the same child branch
                 graph.next_vertices[essential_vertex]
@@ -153,7 +106,7 @@ fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex
 
     println!("points_in_stem_idx={points_in_stem_idx:?}");
 
-    while !points_in_stem_idx.is_empty() && !needs_swapping( *points_in_stem_idx.last().unwrap(), points) && !is_travelling( *points_in_stem_idx.last().unwrap(), points) {
+    while !points_in_stem_idx.is_empty() && !needs_swapping( *points_in_stem_idx.last().unwrap(), points) && !is_travelling( *points_in_stem_idx.last().unwrap(), points, essential_vertex, graph) {
         let idx = points_in_stem_idx.pop().unwrap();
         let branch = *graph.next_vertices[essential_vertex].iter()
             .take_while(|&&i| i <= points[idx][1] )
@@ -167,9 +120,9 @@ fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex
     // The base case: if 'points_in_stem' is already sorted and if all such points are travelling, then return.
     if points_in_stem_idx.iter()
         .zip(points_in_stem_idx.iter().skip(1))
-        .all(|(&i, &j)| cmp(i, j, points).is_lt() ) 
+        .all(|(&i, &j)| local_cmp(i, j, points, essential_vertex, graph).is_lt() ) 
         &&
-        points_in_stem_idx.iter().all(|&i| is_travelling(i, points) )
+        points_in_stem_idx.iter().all(|&i| is_travelling(i, points, essential_vertex, graph) )
     {
         return motions;
     }
@@ -179,7 +132,7 @@ fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex
     let swapping_chunks = {
         let mut cuts = points_in_stem_idx.iter().rev().skip(1)
             .zip( points_in_stem_idx.iter().rev() )
-            .filter(|(&x, &y)| cmp(x, y, points).is_gt() )
+            .filter(|(&x, &y)| local_cmp(x, y, points, essential_vertex, graph).is_gt() )
             .map(|(_,&y)| y )
             .take(n_branches)
             .collect::<Vec<_>>();
@@ -193,7 +146,7 @@ fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex
     };
     debug_assert!( 1 < swapping_chunks.len() && swapping_chunks.len() <= n_branches, "swapping_chunks={swapping_chunks:?}" );
     debug_assert!(
-        swapping_chunks.clone().into_iter().all(|chunk| chunk.end == points_in_stem_idx.len() || cmp(chunk.end-1, chunk.end, points).is_gt() ),
+        swapping_chunks.clone().into_iter().all(|chunk| chunk.end == points_in_stem_idx.len() || local_cmp(chunk.end-1, chunk.end, points, essential_vertex, graph).is_gt() ),
         "swapping_chunks={swapping_chunks:?}, and points are {:?}",
         points_in_stem_idx.iter().map(|&idx| points[idx] ).collect::<Vec<_>>()
     );
@@ -220,7 +173,7 @@ fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex
             |v, w| {
                 let idx1 = curr_points.binary_search_by_key(v, |[s,_]| *s ).unwrap();
                 let idx2 = curr_points.binary_search_by_key(w, |[s,_]| *s ).unwrap();
-                cmp(idx1, idx2, &curr_points)
+                local_cmp(idx1, idx2, &curr_points, essential_vertex, graph)
             }
     );
 
@@ -282,20 +235,16 @@ fn push<const UPWARD: bool, const N: usize>( edge: [usize; 2], idx: usize, point
 // 'fn sort_travelling_points' sorts points in the stem, and send those points that need to be sorted
 // in the child branches to the child branches.
 // This function requires that each point in 'points' inside the stem needs to be a travelling point. 
-fn sort_travelling_points<'a, const N: usize, const FORWARD: bool>( essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &'a GraphInformation ) -> MorsePath<'a, N> {
+fn sort_travelling_points<'a, const N: usize, const FORWARD: bool>( essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &'a AugmentedGraph ) -> MorsePath<'a, N> {
     // initialize 'motions', which is the return value of this function.
     let start = points.iter().map(|&[s,_]| s).collect::<Vec<_>>().try_into().unwrap();
     let end = points.iter().map(|&[_,g]| g).collect::<Vec<_>>().try_into().unwrap();
     let mut motions = MorsePath::new(start, end, &graph);
     
     // 'next_branch' is the smallest vertex that is greater than any child vertices of the essential vertex.
-    let next_branch = {
-        let prev_essential_vertex = (0..essential_vertex).rev()
-            .find(|&idx| graph.degree_in_maximal_tree(idx) != 2 )
-            .unwrap();
-        
-        *graph.next_vertices[prev_essential_vertex].iter().find(|&v| v > &essential_vertex).unwrap_or(&usize::MAX)
-    };
+    let next_branch = *graph.next_vertices[graph.parent[essential_vertex]].iter()
+        .find(|&&v| v>essential_vertex)
+        .unwrap_or(&usize::MAX);
 
     // find the point in the subtree that has the .
     let smallest_pt_idx = {
@@ -338,7 +287,7 @@ fn sort_travelling_points<'a, const N: usize, const FORWARD: bool>( essential_ve
     motions
 }
 
-fn collect_sorted_points<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N], graph: &GraphInformation) -> Box<dyn Iterator<Item = [usize; 2]>> {
+fn collect_sorted_points<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N], graph: &AugmentedGraph) -> Box<dyn Iterator<Item = [usize; 2]>> {
     let points_in_stem = (0..essential_vertex).rev()
         .take_while(|v| v==&essential_vertex || graph.degree_in_maximal_tree(*v)<=2 )
         .filter_map(|v| points.binary_search_by_key(&v, |[s,_]| *s ).ok())
@@ -358,71 +307,51 @@ fn collect_sorted_points<const N: usize>(essential_vertex: usize, points: &[[usi
 }
 
 
-// 'fn cmp' determines order among points during the algorithm. The order changes whether we are computing the forward path
-//  or the backward path. 
-fn cmp<const FORWARD: bool>(p: &[usize; 2], q: &[usize; 2]) -> Ordering {
-    s
+// 'fn is_travelling' determines whether or not the point 'p' needs to travel towards other branches 
+// through the given 'essential_vertex'.
+fn is_travelling<const N: usize, const FORWARD: bool>(idx: usize, points: &[[usize;2]; N], essential_vertex: usize, graph: &AugmentedGraph) -> bool {
+    // 'next_branch' is the smallest vertex greater than 'essential_vertex' that is adjacent to the parent of 'essential_vertex'.
+    let next_branch = *graph.next_vertices[graph.parent[essential_vertex]].iter().find(|&&v| v>essential_vertex).unwrap_or(&usize::MAX);
+    points[idx][if FORWARD {1} else {0}] >= next_branch || points[idx][if FORWARD {1} else {0}] <= essential_vertex
 }
 
-struct UsizeIndexable<T>(Vec<(usize, T)>);
 
-impl<T> std::ops::Index<usize> for UsizeIndexable<T> {
-    type Output = T;
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[self.0.binary_search_by_key(&index, |&(i,_)| i ).unwrap()].1
-    }
-}
 
-struct GraphInformation<'a> {
-    pub graph_ref: &'a RawSimpleGraph,
-    pub next_essential_vertices: UsizeIndexable<Vec<usize>>,
-    pub next_vertices: UsizeIndexable<Vec<usize>>,
-    pub essential_vertices: Vec<usize>, // vertices of degree not equal to 2 in maximal tree
-}
+// 'fn local_cmp' determines the order among those points whose starting position (which depends on 'FORWARD') is greater than
+// the parent of 'essential_vertex'. This order is defined only around the given essential vertex.
+fn local_cmp<const N: usize, const FORWARD: bool>(idx1: usize, idx2: usize, points: &[[usize;2];N], essential_vertex: usize, graph: &AugmentedGraph) -> Ordering {
+    // check that the starting position of each of the two points is contained in the branch of 'essential_vertex'.
+    assert!({
+            let parent = graph.parent[essential_vertex];
+            let next_branch = *graph.next_vertices[parent].iter().find(|&&v| v>essential_vertex).unwrap_or(&usize::MAX);
+            (parent+1..next_branch).contains(&points[idx1][if FORWARD{0} else {1}]) &&
+            (parent+1..next_branch).contains(&points[idx2][if FORWARD{0} else {1}])
+        },
+        "The two points to not belong to the current branch; points[idx1]={:?} and points[idx2]={:?}.",
+        points[idx1], points[idx2]
+    );
 
-impl<'a> std::ops::Deref for GraphInformation<'a> {
-    type Target = RawSimpleGraph;
-    fn deref(&self) -> &Self::Target {
-        &self.graph_ref
-    }
-}
+    let is_p1_travelling = is_travelling(idx1, points, essential_vertex, graph);
+    let is_p2_travelling = is_travelling(idx2, points, essential_vertex, graph);
 
-impl<'a> GraphInformation<'a> {
-    pub fn from(graph_ref: &'a RawSimpleGraph) -> Self {
-        Self {
-            graph_ref,
-            next_essential_vertices: Self::get_next_essential_vertices_dictionary(graph_ref),
-            next_vertices: Self::get_next_vertices_dictionary(graph_ref),
-            essential_vertices: Self::get_essential_vertices(graph_ref),
+    let p1_goal = points[idx1][if FORWARD{1} else {0}]; 
+    let p2_goal = points[idx2][if FORWARD{1} else {0}];
+
+    if is_p1_travelling && !is_p2_travelling {
+        Ordering::Less
+    } else if !is_p1_travelling && is_p2_travelling {
+        Ordering::Greater
+    } else if is_p1_travelling && is_p2_travelling {
+        // if both p1 and p2 are travelling, then the order is determined by their goal vertices and the direction of the
+        // algorithm (i.e, 'FORWARD').
+        if FORWARD {
+            p1_goal.cmp( &p2_goal )    
+        } else {
+            p2_goal.cmp( &p1_goal )
         }
-    }
-
-    fn get_next_essential_vertices_dictionary(graph: &RawSimpleGraph) -> UsizeIndexable<Vec<usize>> {
-        let out = graph.vertex_iter()
-            .map(|v| v.vertex() )
-            .filter(|v| graph.degree_in_maximal_tree(*v) != 2 )
-            .map(|v| (v, get_next_essential_vertices(v, graph)))
-            .collect::<Vec<_>>();
-
-        UsizeIndexable(out)
-    }
-    
-    
-    fn get_next_vertices_dictionary(graph: &RawSimpleGraph) -> UsizeIndexable<Vec<usize>> {
-        let out = graph.vertex_iter()
-            .map(|v| v.vertex() )
-            .filter(|v| graph.degree_in_maximal_tree(*v) != 2 )
-            .map(|v| (v, get_next_vertices(v, graph)))
-            .collect::<Vec<_>>();
-
-        UsizeIndexable(out)
-    }
-    
-    fn get_essential_vertices(graph: &RawSimpleGraph) -> Vec<usize> {
-        graph.vertex_iter()
-        .map(|v| v.vertex() )
-        .filter(|v| graph.degree_in_maximal_tree(*v) != 2 )
-        .collect::<Vec<_>>()
+    } else {
+        // otherwise both p1 and p2 stay in the branch. In this case, the order is determined by the goal vertex.
+        p1_goal.cmp( &p2_goal )
     }
 }
 
@@ -431,12 +360,12 @@ impl<'a> GraphInformation<'a> {
 mod path_generation_on_tree_tests {
     // 'N' is the number of robots
     const N: usize = 6;
-    use crate::{ graph_collection, graphics, search::GraphInformation };
+    use crate::{ graph_collection, graphics, search::AugmentedGraph };
 
     #[test]
     fn sort_points_in_stem() -> Result<(), Box<dyn std::error::Error>> {
         let (graph, embedding, name) = graph_collection::RawGraphCollection::Grid.get();
-        let graph = GraphInformation::from(&graph);
+        let graph = AugmentedGraph::from(&graph);
 
         let mut points = [[0,5], [16,20], [17,19], [20,6], [21,21], [49,49]];
 

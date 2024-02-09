@@ -10,7 +10,7 @@ pub mod graph_collection;
 pub mod graphics;
 pub mod search;
 pub mod operators;
-
+pub mod augmented_graph;
 
 #[derive(Copy)]
 pub struct SortedArray<const N: usize, T: Ord + Debug> {
