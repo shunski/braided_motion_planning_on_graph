@@ -10,9 +10,9 @@ pub fn path_in_tree<'a, const N: usize>(points: &mut [[usize; 2]; N], graph: &'a
     let graph = AugmentedGraph::<'a>::from(graph);
 
 
-    // the dynamic programming and recursively sort the points in the graph at each essential vertices.
-    let first_essential_vertex = *graph.next_essential_vertices[0].first().unwrap();
-    let mut motions = path_at_essential_vertex_dyn(first_essential_vertex, points, &graph);
+    // the dynamic programming and recursively sort the points in the graph at each essential vertex.
+    let first_evertex_of_deg_greater_than_two = *graph.next_essential_vertices[0].first().unwrap();
+    let mut motions = path_at_essential_vertex_dyn(first_evertex_of_deg_greater_than_two, points, &graph);
 
     // bring all the points to the basepoint
     let sorted_iter = collect_sorted_points(*graph.essential_vertices.first().unwrap(), points, &graph);
@@ -94,7 +94,7 @@ fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex
     };
 
 
-    // 'points_in_stem_idx' is the points located at vertices smaller than or equal to the current essential vertex and 
+    // 'points_in_stem_idx' is the points located at vertices less than or equal to the current essential vertex and 
     // larger than the previous essential vertex of valency greater than 3 or greater than or equal to the previous
     // essential vertex of valency 1.
     let mut points_in_stem_idx = (0..=essential_vertex).rev()
@@ -191,6 +191,7 @@ fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex
 
 
 // This function takes a point by 'idx: usize' and its motion by 'edge: [usize; 2]' and computes the "push" motion.
+// Even though most of such motions are non-order-respecting motions, 'points' will be sorted after each call of this function.
 fn push<const UPWARD: bool, const N: usize>( edge: [usize; 2], idx: usize, points: &mut [[usize; 2]; N] ) -> MorseCube<N> {
     println!("pushing along {edge:?}");
     let terminal = edge[1];
@@ -234,9 +235,26 @@ fn push<const UPWARD: bool, const N: usize>( edge: [usize; 2], idx: usize, point
 
 // 'fn sort_travelling_points' sorts points in the stem, and send those points that need to be sorted
 // in the child branches to the child branches.
-// This function requires that each point in 'points' inside the stem needs to be a travelling point. 
+// This function requires that 
+//     (1) each point in 'points' inside the stem needs to be a travelling point,
+//     (2) and that 'points' is sorted by the first (or second) element if 'FORWARD'='true' (or ='false').
 fn sort_travelling_points<'a, const N: usize, const FORWARD: bool>( essential_vertex: usize, points: &mut [[usize; 2]; N], graph: &'a AugmentedGraph ) -> MorsePath<'a, N> {
-    // initialize 'motions', which is the return value of this function.
+    // First, check the two conditions specified above.
+    assert!(
+        (0..points.len()).all(|i| is_travelling::<N,FORWARD>(i, points, essential_vertex, graph)),
+        "Not all the points are travelling."
+    );
+    assert!(
+        points.iter()
+            .map(|p| if FORWARD {p[0]} else {p[1]} )
+            .zip(points.iter().skip(1).map(|p| if FORWARD {p[0]} else {p[1]} ))
+            .all(|(x,y)| x < y),
+        "Points not sorted with repspect to the {} element.",
+        if FORWARD {"first"} else {"second"}
+    );
+
+
+    // initialize 'motions', which is the output of this function.
     let start = points.iter().map(|&[s,_]| s).collect::<Vec<_>>().try_into().unwrap();
     let end = points.iter().map(|&[_,g]| g).collect::<Vec<_>>().try_into().unwrap();
     let mut motions = MorsePath::new(start, end, &graph);
@@ -246,10 +264,6 @@ fn sort_travelling_points<'a, const N: usize, const FORWARD: bool>( essential_ve
         .find(|&&v| v>essential_vertex)
         .unwrap_or(&usize::MAX);
 
-    // find the point in the subtree that has the .
-    let smallest_pt_idx = {
-        
-    };
     
     // collect the points in stem.
     let points_in_stem_idx = (0..=essential_vertex).rev()
@@ -262,34 +276,66 @@ fn sort_travelling_points<'a, const N: usize, const FORWARD: bool>( essential_ve
         return MorsePath::new(start, end, graph);
     }
 
-    // if there is a vacant branch, then push as many points in stem toward the branch and return.
+    // if there is a vacant branch, then push as many points in stem toward that branch and return.
     if let Some((&vacant_branch, _)) = graph.next_vertices[essential_vertex].iter()
         .zip( graph.next_vertices[essential_vertex].iter().skip(1).chain([next_branch].iter()) )
-        .find(|&(&v, &w)| points.iter().all(|[x,_]| (v..w).contains(&x) ) ) // ToDo: change this to to binray search
+        .find(|&(&v, &w)| points.iter().all(|[x,_]| !(v..w).contains(&x) ) ) // ToDo: change this to to binray search
     {
         let edge = [essential_vertex, vacant_branch];
         for idx in points_in_stem_idx {
-            push::<true, N>(edge, idx, points);
+            motions.add( push::<true, N>(edge, idx, points) );
         }
         return motions
     }
 
-    // otherwise, we simply sort the points using 'essential_vertex'.
-    let max_p = points[*points_in_stem_idx.last().unwrap()];
-    let iter = graph.next_vertices[essential_vertex].iter()
-        .map( |v|
-            (v..).filter_map(|x|  )
-        );
+    // if there is a branch such that every point in it is greater than the largest travelling point (in the local order), 
+    // then push all the points towards the branch and return.
+    if let Some((&nice_branch, _)) = graph.next_vertices[essential_vertex].iter()
+        .zip( graph.next_vertices[essential_vertex].iter().skip(1).chain([next_branch].iter()) )
+        .find(|&(&v, &w)| points.iter().all(|[x,_]| 
+            !(v..w).contains(&x) ||
+            local_cmp(*x, *points_in_stem_idx.last().unwrap(), points, essential_vertex, graph).is_gt() ) 
+        )
+    {
+        let edge = [essential_vertex, nice_branch];
+        for idx in points_in_stem_idx {
+            motions.add( push::<true, N>(edge, idx, points) );
+        }
+        return motions
+    }
 
-    let next_iters_merged = merge_sorted_dyn_by_key( next_iters, |[s,_]| *s );
+
+    // Otherwise, we have to push all the travelling points to the child branches, and leave them to swap the points.
+    // The straightforward implementation is to equally distribute points to the branches with more than one essential vertices.
+    for (&idx, &terminal) in points_in_stem_idx.iter().rev()
+        .zip(
+            graph.next_vertices[essential_vertex].iter()
+                // make sure that we filter out the branches homeomorphic to a line segment
+                .filter(|&&v| (v..).find(|&w| graph.degree_in_maximal_tree(w)!=2).unwrap() > 2 )
+        )
+        .cycle()
+    {
+        let initial = points[idx][if FORWARD {0} else {1}];
+        motions.add(push::<true, N>([initial, terminal], idx, points))
+    }
 
 
     motions
 }
 
+// This function returns an iterator over all the elements of 'points' in the order determined by their goals.
+// This function requires that
+//     (1) each element of 'points' be either travelling or staying in the same stem, and that
+//     (2) elements of 'points' in each branch is sorted by 'local_cmp'.
 fn collect_sorted_points<const N: usize>(essential_vertex: usize, points: &[[usize; 2]; N], graph: &AugmentedGraph) -> Box<dyn Iterator<Item = [usize; 2]>> {
-    let points_in_stem = (0..essential_vertex).rev()
-        .take_while(|v| v==&essential_vertex || graph.degree_in_maximal_tree(*v)<=2 )
+    // check condition (1)
+    assert!(
+        points.iter().map(|p|  ),
+        ""
+    );
+
+    let points_in_stem = (0..=essential_vertex).rev()
+        .take_while(|&v| v==essential_vertex || graph.degree_in_maximal_tree(v)<=2 )
         .filter_map(|v| points.binary_search_by_key(&v, |[s,_]| *s ).ok())
         .map(|idx| points[idx] )
         .collect::<Vec<_>>();
@@ -307,12 +353,14 @@ fn collect_sorted_points<const N: usize>(essential_vertex: usize, points: &[[usi
 }
 
 
-// 'fn is_travelling' determines whether or not the point 'p' needs to travel towards other branches 
-// through the given 'essential_vertex'.
+// 'fn is_travelling' determines whether or not the point 'p' needs to travel towards other branches through the given 'essential_vertex'.
+// Note that if a point stays in the stem, then this point is by definition NOT a travelling point.
 fn is_travelling<const N: usize, const FORWARD: bool>(idx: usize, points: &[[usize;2]; N], essential_vertex: usize, graph: &AugmentedGraph) -> bool {
     // 'next_branch' is the smallest vertex greater than 'essential_vertex' that is adjacent to the parent of 'essential_vertex'.
     let next_branch = *graph.next_vertices[graph.parent[essential_vertex]].iter().find(|&&v| v>essential_vertex).unwrap_or(&usize::MAX);
-    points[idx][if FORWARD {1} else {0}] >= next_branch || points[idx][if FORWARD {1} else {0}] <= essential_vertex
+    let smallest_v_in_stem = (0..essential_vertex).rev().filter(|&v| graph.degree_in_maximal_tree(v)==2).last().unwrap();
+    let p = points[idx][if FORWARD {1} else {0}];
+    p >= next_branch || p < smallest_v_in_stem
 }
 
 

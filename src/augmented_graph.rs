@@ -103,7 +103,7 @@ impl<'a> AugmentedGraph<'a> {
     }
 
     fn get_parent(essential_vertices: &[usize]) -> UsizeIndexable<usize> {
-        // Just making sure that the 'essential_vertices' are sorted...
+        // Just making sure that 'essential_vertices' is sorted...
         assert!(
             essential_vertices.iter().zip(&essential_vertices[1..]).all(|(v, w)| v < w ),
             "'essential_vertices' is not sorted."
