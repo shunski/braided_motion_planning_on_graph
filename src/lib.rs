@@ -11,6 +11,7 @@ pub mod graphics;
 pub mod search;
 pub mod operators;
 pub mod augmented_graph;
+pub mod util;
 
 #[derive(Copy)]
 pub struct SortedArray<const N: usize, T: Ord + Debug> {
@@ -139,7 +140,7 @@ impl<const N: usize, T: Ord + Copy + Debug> SortedArray<N,T> {
 // 'N' is the number of points (or robots)
 pub struct MorseCube<const N: usize> {
     // edges and vertices are stored in a separated variable. This implementation allows users to access the
-    // edges (or vertices) quickly, even though the memory space is not minimal.
+    // edges (or vertices) quickly, even though the use of the memory not most efficient.
 
     // 'edges' is the set of edges in the cube.
     edges: SortedArray<N, [usize; 2]>,

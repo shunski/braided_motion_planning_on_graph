@@ -5,14 +5,14 @@ use topo_spaces::graph::RawSimpleGraph;
 use crate::augmented_graph::AugmentedGraph;
 use crate::{MorsePath, MorseCube, SortedArray};
 
-// The main algorithm that computes the path 
+
+// The main algorithm that computes the path in the maximal tree.
 pub fn path_in_tree<'a, const N: usize>(points: &mut [[usize; 2]; N], graph: &'a RawSimpleGraph) -> MorsePath<'a, N> {
     let graph = AugmentedGraph::<'a>::from(graph);
 
-
     // the dynamic programming and recursively sort the points in the graph at each essential vertex.
-    let first_evertex_of_deg_greater_than_two = *graph.next_essential_vertices[0].first().unwrap();
-    let mut motions = path_at_essential_vertex_dyn(first_evertex_of_deg_greater_than_two, points, &graph);
+    let first_vertex_of_deg_greater_than_two = *graph.next_essential_vertices[0].first().unwrap();
+    let mut motions = path_at_essential_vertex_dyn(first_vertex_of_deg_greater_than_two, points, &graph);
 
     // bring all the points to the basepoint
     let sorted_iter = collect_sorted_points(*graph.essential_vertices.first().unwrap(), points, &graph);
@@ -190,49 +190,6 @@ fn sort_points_in_stem<'a, const N: usize, const FORWARD: bool>(essential_vertex
 }
 
 
-// This function takes a point by 'idx: usize' and its motion by 'edge: [usize; 2]' and computes the "push" motion.
-// Even though most of such motions are non-order-respecting motions, 'points' will be sorted after each call of this function.
-fn push<const UPWARD: bool, const N: usize>( edge: [usize; 2], idx: usize, points: &mut [[usize; 2]; N] ) -> MorseCube<N> {
-    println!("pushing along {edge:?}");
-    let terminal = edge[1];
-
-    // if 'terminal' is occupied by another point, then push them, and make some space.
-    if let Ok(i) = points.binary_search_by_key(&terminal, |[s,_]| *s ) {
-        let last_idx = if UPWARD {
-            (terminal+1..).zip(i+1..).find(|&(v,j)| j==points.len() || v != points[j][0] ).unwrap().1
-        } else {
-            (0..=terminal).rev().zip((0..=i).rev()).take_while(|&(v,j)| v == points[j][0] ).last().unwrap().1
-        };
-
-        if UPWARD {
-            for j in i..last_idx { points[j][0] += 1; } 
-        } else {
-            for j in last_idx..=i { points[j][0] -= 1; }
-        }
-    }
-
-
-    // create the motion
-    let vertices: SortedArray<N, usize> = points.iter()
-        .map(|&[s,_]| s )
-        .filter(|&s| s!=points[idx][0])
-        .collect::<Vec<_>>()
-        .try_into().unwrap();
-    debug_assert!(vertices.len() == N-1);
-
-    let edges: SortedArray<N, [usize; 2]> = [edge].into();
-
-    let motion = MorseCube::new_unchecked(edges, vertices);
-
-
-    // finally, physically move the point
-    points[idx][0] = terminal;
-    points.sort(); // ToDo: This can be more efficient
-
-    motion
-}
-
-
 // 'fn sort_travelling_points' sorts points in the stem, and send those points that need to be sorted
 // in the child branches to the child branches.
 // This function requires that 
@@ -361,46 +318,6 @@ fn is_travelling<const N: usize, const FORWARD: bool>(idx: usize, points: &[[usi
     let smallest_v_in_stem = (0..essential_vertex).rev().filter(|&v| graph.degree_in_maximal_tree(v)==2).last().unwrap();
     let p = points[idx][if FORWARD {1} else {0}];
     p >= next_branch || p < smallest_v_in_stem
-}
-
-
-
-// 'fn local_cmp' determines the order among those points whose starting position (which depends on 'FORWARD') is greater than
-// the parent of 'essential_vertex'. This order is defined only around the given essential vertex.
-fn local_cmp<const N: usize, const FORWARD: bool>(idx1: usize, idx2: usize, points: &[[usize;2];N], essential_vertex: usize, graph: &AugmentedGraph) -> Ordering {
-    // check that the starting position of each of the two points is contained in the branch of 'essential_vertex'.
-    assert!({
-            let parent = graph.parent[essential_vertex];
-            let next_branch = *graph.next_vertices[parent].iter().find(|&&v| v>essential_vertex).unwrap_or(&usize::MAX);
-            (parent+1..next_branch).contains(&points[idx1][if FORWARD{0} else {1}]) &&
-            (parent+1..next_branch).contains(&points[idx2][if FORWARD{0} else {1}])
-        },
-        "The two points to not belong to the current branch; points[idx1]={:?} and points[idx2]={:?}.",
-        points[idx1], points[idx2]
-    );
-
-    let is_p1_travelling = is_travelling(idx1, points, essential_vertex, graph);
-    let is_p2_travelling = is_travelling(idx2, points, essential_vertex, graph);
-
-    let p1_goal = points[idx1][if FORWARD{1} else {0}]; 
-    let p2_goal = points[idx2][if FORWARD{1} else {0}];
-
-    if is_p1_travelling && !is_p2_travelling {
-        Ordering::Less
-    } else if !is_p1_travelling && is_p2_travelling {
-        Ordering::Greater
-    } else if is_p1_travelling && is_p2_travelling {
-        // if both p1 and p2 are travelling, then the order is determined by their goal vertices and the direction of the
-        // algorithm (i.e, 'FORWARD').
-        if FORWARD {
-            p1_goal.cmp( &p2_goal )    
-        } else {
-            p2_goal.cmp( &p1_goal )
-        }
-    } else {
-        // otherwise both p1 and p2 stay in the branch. In this case, the order is determined by the goal vertex.
-        p1_goal.cmp( &p2_goal )
-    }
 }
 
 
