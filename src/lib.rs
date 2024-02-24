@@ -1,9 +1,9 @@
-use std::{collections::VecDeque, fmt::Debug};
+use std::{collections::VecDeque, fmt::Debug, usize};
 
 use topo_spaces::graph::RawSimpleGraph;
+use util::SortedArray;
 
 use std::ops::{Deref, DerefMut};
-use std::{mem, usize};
 
 
 pub mod graph_collection;
@@ -13,205 +13,107 @@ pub mod operators;
 pub mod augmented_graph;
 pub mod util;
 
-#[derive(Copy)]
-pub struct SortedArray<const N: usize, T: Ord + Debug> {
-    data: [T; N],
-    len: usize,
-}
-
-impl<const N: usize, T: Ord + Copy + Debug> SortedArray<N, T> {}
-
-impl<const N: usize, T: Ord + Copy + Debug> std::ops::Deref for SortedArray<N, T> {
-    type Target = [T];
-    fn deref(&self) -> &Self::Target {
-        &self.data[..self.len]
-    }
-}
-
-impl<const N: usize, T: Ord + Copy + Debug> Clone for SortedArray<N,T> {
-    fn clone(&self) -> Self {
-        let mut out = Self::new();
-        for &x in self.iter() {
-            out.add_without_sort(x);
-        }
-        out
-    }
-}
-
-impl<const N: usize, T: Ord + Copy + Debug> std::ops::DerefMut for SortedArray<N, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data[..self.len]
-    }
-}
-
-impl<const N: usize, T: Ord + Copy + Debug> Debug for SortedArray<N, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.data[..self.len].fmt(f)
-    }
-}
-
-impl<const N: usize, const M: usize, T: Ord + Copy + Debug> From<[T; M]> for SortedArray<N, T> {
-    fn from(mut value: [T; M]) -> Self {
-        assert!( M <= N, "cannot build an array of size {N} from an array of size {M}");
-        
-        value.sort();
-        let mut out = Self::new();
-        for x in value {
-            out.add_without_sort(x);
-        }
-        out
-    }
-}
-
-
-impl<const N: usize, T: Ord + Copy + Debug> TryFrom<Vec<T>> for SortedArray<N, T> {
-    type Error = Self;
-    // if 'value.len() > N', then this function creates an array of 'N' elements that contains first 'N' elements of 'value',
-    // and encloses it in 'Err'
-    fn try_from(mut value: Vec<T>) -> Result<Self, Self::Error> {
-        value.sort();
-        let is_error = value.len() > N;
-        let mut out = Self::new();
-        for x in value.into_iter().take(N) {
-            out.add_without_sort(x);
-        }
-        if is_error {
-            Err(out)
-        } else {
-            Ok(out)
-        }
-    }
-}
-
-impl<const N: usize, T: Ord + Copy + Debug> SortedArray<N,T> {
-    pub fn new() -> Self {
-        let data = unsafe {
-            mem::MaybeUninit::uninit().assume_init()
-        };
-        Self { data, len: 0 }
-    }
-
-    #[inline]
-    pub fn add_without_sort(&mut self, v: T) {
-        assert!(self.len<N, "The array is full. array={self:?}, while trying to add {v:?}");
-
-        unsafe{
-            self.data.as_mut_ptr().add(self.len).write(v);
-        }
-
-        self.len+=1;
-        debug_assert!(
-            self.iter().zip(self.iter().skip(1)).all(|(x,y)| x<y ),
-            "self={self:?} is not sorted."
-        );
-    }
-
-    pub fn add(&mut self, v: T) {
-        assert!(self.len<N, "The array is full. array={self:?}, while trying to add {v:?}");
-
-        unsafe{
-            self.data.as_mut_ptr().add(self.len).write(v);
-        }
-        self.len+=1;
-
-        self.sort(); // ToDo: This can be more efficient
-    }
-
-    pub fn remove(&mut self, idx: usize) -> T {
-        assert!(idx < self.len, "index out of bounds: array is of length={}, but 'idx'={idx}", self.len);
-
-        let out = self[idx];
-        for i in idx..self.len-1 {
-            self[i] = self[i+1]; 
-        }
-
-        self.len -= 1;
-        out
-    }
-
-    fn into_iter(self) -> impl Iterator<Item = T> { 
-        self.data.into_iter().take(self.len)
-    }
-}
-
 
 #[derive(Clone, Copy, Debug)]
 // This struct represents a cell in a discrete morse complex built upon the cube complex.
 // 'N' is the number of points (or robots)
 pub struct MorseCube<const N: usize> {
     // edges and vertices are stored in a separated variable. This implementation allows users to access the
-    // edges (or vertices) quickly, even though the use of the memory not most efficient.
+    // edges (or vertices) quickly, even though the use of the memory is not the most efficient.
 
     // 'edges' is the set of edges in the cube.
-    edges: SortedArray<N, [usize; 2]>,
+    // each element has two distinct elements sorted by the order of 'usize'.
+    edges: util::SortedArray<N, [usize; 2]>,
     
     // 'vertices' is the set of vertices in the cube.
-    vertices: SortedArray<N, usize>,
+    vertices: util::SortedArray<N, usize>,
 
     // It must be true that 'N = self.edges.len() + self.vertices.len()' at any given time.
 }
 
 
 impl<const N: usize> MorseCube<N> {
-    #[inline]
-    pub fn new_unchecked(edges: SortedArray<N, [usize; 2]>, vertices: SortedArray<N, usize>) -> Self {
+    #[inline(always)]
+    // 'fn new_unchecked' creates 'MorseCube' without performing any check on the input arguments.
+    // This function reqiuires that;
+    //     (1) the sum of the size of 'edges' and 'vertices' be 'N', that
+    //     (2) each element in 'edges' be sorted by the order of 'usize', and that
+    //     (3) elements of 'edges' and 'vertices' be distinct.
+    // However, again, this method does not make sure these conditions are met.
+    pub fn new_unchecked(edges: util::SortedArray<N, [usize; 2]>, vertices: util::SortedArray<N, usize>) -> Self {
         // the size of 'edges' and 'vertices' must add up to 'N', but we do not check them in this function.
         debug_assert!( edges.len() + vertices.len() == N );
+        // each element in 'edges' must be sorted by the order of usize, but we do not check this in this function.
+        debug_assert!( edges.iter().all(|[a,b]| a < b ) );
+        // elements of 'edges' and 'vertices' must be distinct, but we do not check this in this function.
+        debug_assert!({
+            let mut v: Vec<_> = edges.iter().flatten().chain(vertices.iter()).collect();
+            v.sort();
+            v.iter().zip(v.iter().skip(1)).all(|(x,y)| x != y)
+        });
+        
         Self { edges, vertices }
     }
 
-    // this function creates a morse cube only if the cell described by the input is critical. Otherwise it returns 'None'
-    pub fn new_checked(edges: SortedArray<N, [usize; 2]>, vertices: SortedArray<N, usize>) -> Option<Self> {
-        // the size of 'edges' and 'vertices' must add up to 'N', but we do not check them in this function.
-        debug_assert!( edges.len() + vertices.len() == N );
-
-        for mut edge in edges.iter().copied() {
-            edge.sort();
-
-            // The following closure is not necessary, but it can help speed up.
-            if edge[1] - edge[0] == 1 {
-                return None;
-            };
-
-            // is the edge is not disrespecting the order then return 'None'
-            if vertices.iter().copied().all(|v| v < edge[0] || edge[1] < v ) {
-                return None;
-            }
-        }
-
-        // coming here means that the edge is critical.
-        Some( Self { edges, vertices } )
+    #[inline]
+    // 'fn new_checked' creates 'MorseCube' from edges and vertices.
+    // This function reqiuires that;
+    //     (1) the sum of the size of 'edges' and 'vertices' be 'N', that
+    //     (2) each element in 'edges' be sorted by the order of 'usize', and that
+    //     (3) elements of 'edges' and 'vertices' be distinct.
+    // These conditions will be checked internally. If the caller is 100% sure that the conditions are met and would like 
+    // to improve the performance by skipping these checks, 'fn new_unchecked' can be used instead.
+    pub fn new_checked(edges: util::SortedArray<N, [usize; 2]>, vertices: util::SortedArray<N, usize>) -> Self {
+        // check that the size of 'edges' and 'vertices' must add up to 'N'.
+        assert!( edges.len() + vertices.len() == N );
+        // check that each element in 'edges' must be sorted by the order of usize.
+        assert!( edges.iter().all(|[a,b]| a < b ) );
+        // check that the elements of 'edges' and 'vertices' must be distinct. ToDo: This can be more efficient.
+        assert!({
+            let mut v: Vec<_> = edges.iter().flatten().chain(vertices.iter()).collect();
+            v.sort();
+            v.iter().zip(v.iter().skip(1)).all(|(x,y)| x != y)
+        });
+        
+        Self { edges, vertices }
     }
 
-    pub fn is_valid(&self, graph: &RawSimpleGraph) -> bool {
-        // check that the number of points is correct
-        if self.edges.len() + self.vertices.len() != N {
-            return false;
-        }
 
-        // check that the cell is contained in the graph
-        self.vertices.iter().all( |&v| v < graph.n_vertices() )
-        && self.edges.iter().all(|&[v, w]| graph.contains(v, w) )
+    // 'fn flows_to_critical_one_cell' returns true iff 'self' flows to a critical one cell in the graph.
+    pub fn flows_to_critical_one_cell(&self, graph: &RawSimpleGraph) -> bool {
+        match self.edges.len() {
+            0 => {
+                // Any cube of dimension 0 does not flow to any critical 1-cell.
+                false
+            },
+
+            1 => {
+                let [initial, terminal] = self.edges[0];
+                let idx1 = self.vertices.binary_search(&initial).expect_err("'edges' and 'vertices' are not distinct.");
+                let idx2 = self.vertices.binary_search(&terminal).expect_err("'edges' and 'vertices' are not distinct.");
+                
+                // 'idx1==idx2' implies that the edge is order-respecting.
+                idx1!=idx2
+            },
+
+            2 => {
+                panic!("The case where the dimension is 2 is not supported yet.")
+            },
+
+            3.. => {
+                // Any cube of dimension greater than 2 does not flow to any critical 1-cell.
+                false
+            },
+        }
     }
     
     pub fn get_edge_path(&self, graph: &RawSimpleGraph) -> CubicPath<N> {
-        let (critical_motion, [start, end]) = ElementaryCubicPath::from_morse_cube(self);
-
-        // 'start' and 'end' are already sorted.
-        debug_assert!( 
-            end.into_iter().zip(end.into_iter().skip(1)).all(|(a,b)| a < b ),
-            "end = {end:?} \n is not ordered. implementation of 'ElementaryCubicPath::from_morse_cube' might be wrong."
-        );
-        debug_assert!( 
-            start.into_iter().zip(start.into_iter().skip(1)).all(|(a,b)| a < b ),
-            "start = {start:?} \n is not ordered. implementation of 'ElementaryCubicPath::from_morse_cube' might be wrong."
-        );
+        let (critical_motion, [start, end]) = self.get_critical_path();
 
         let mut path = VecDeque::from([critical_motion]);
-        // panic!("start={start:?}");
-        // panic!("end={end:?}");
-        let start = get_edge_path_recc::<N, false>(&start, &mut path, graph);
-        let end = get_edge_path_recc::<N, true>(&end, &mut path, graph);
+        
+        get_edge_path_recc::<N, false>(&start, &mut path, graph);
+        get_edge_path_recc::<N, true>(&end, &mut path, graph);
 
         let path = CubicPath{
             path: path.into(),
@@ -221,131 +123,182 @@ impl<const N: usize> MorseCube<N> {
 
         path
     }
+
+
+    // 'fn get_critical_path' returns the motion of the critical 1-cell as an 'ElementaryCubicPath' and its ends as "[SortedArray<N, usize>; 2]".
+    // This method panics if 'self' is not a 1-dimensional cube. (Note that the dimension of 'self' is 'self.edges.len()')
+    fn get_critical_path(&self) -> (ElementaryCubicPath<N>, [SortedArray<N, usize>; 2]) {
+        assert!(
+            self.edges.len()==1, 
+            "a cubic path can be created only if the cube is 1-dimensional, but it is {} dimensional. cube={self:?}", 
+            self.edges.len()
+        );
+
+        let edge = self.edges[0];
+
+        let mut start = self.vertices;
+        start.insert(edge[0]);
+
+        let mut end = self.vertices;
+        end.insert(edge[1]);
+
+        let out = {
+            let mut out = ElementaryCubicPath::identity();
+            out.data.push(edge);
+            out
+        };
+
+        (out, [start, end])
+    }
 }
 
 
-// This struct represents the one-step of the cubic path.
-// Any instance of this struct must satisfy the condition that the array 'self[..][0]' is sorted, that is, the start of elementary path is sorted. 
+// 'ElementaryCubicPath' represents the one-step of the cubic path.
+// This struct is PRIVATE to the module. Hence any method of this struct will not panic 
+// even if the input argument is not meeting its condition. 
 #[derive(Clone, Copy)]
-pub struct ElementaryCubicPath<const N: usize>(SortedArray<N,[usize;2]>);
+struct ElementaryCubicPath<const N: usize> {
+    // 'data' is a cube that represents a single (directed) step in the configuration space.
+    // It must be sorted by the first element of the elements, by the order of 'usize'.
+    // its elements must be distinct.
+    data: util::SortedArray<N,[usize;2]>
+}
 
 impl<const N: usize> Debug for ElementaryCubicPath<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl<const N: usize> Deref for ElementaryCubicPath<N>{
-    type Target = SortedArray<N, [usize;2]>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<const N: usize> DerefMut for ElementaryCubicPath<N>{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        self.data.fmt(f)
     }
 }
 
 
 impl<const N: usize> ElementaryCubicPath<N> {
-    pub fn new() -> Self {
-        Self(SortedArray::new())
+    // 'fn identity' creates the identity path, that is, the path that does not move the element.
+    fn identity() -> Self {
+        Self{data: util::SortedArray::new() }
     }
 
-    pub fn act_on(&self, p: &mut [usize; N]) {
+    // 'fn is_identity' returns 'true' iff the path is the same as 'identity()'.
+    fn is_identity(&self) -> bool {
+        self.data.len()==0
+    }
+
+
+    // 'fn new_unchecked' creates the new 'ElementaryCubicPath' object from the input argument without performing any check on it.
+    // The input argument 'v' must satisfy the requirements to be the member 'data' (See the struct definition).
+    // However, this method does not check them.
+    #[inline(always)]
+    fn new_unchecked(v: util::SortedArray<N, [usize; 2]>) -> Self {
+        // The input argument has to be sorted by the first element, by the order of usize, but we do not check this in this function.
+        debug_assert!(
+            v.iter().zip(v.iter().skip(1)).all(|([a,_],[b,_])| a < b),
+            "The input argument has to be sorted by the first element, by the order of usize, but it is not;  {:?}",
+            v
+        );
+
+        // The input argument has to have distinct elements, but we do not check this in this function.
+        debug_assert!(
+            {
+                let mut elements: Vec<_> = v.iter().flatten().collect();
+                elements.sort();
+                elements.iter().zip(elements.iter().skip(1)).all(|(a,b)| a != b )
+            },
+            "The input argument has to have distinct elements, but it is not;  {:?}",
+            v
+        );
+
+
+        ElementaryCubicPath{ data: v }
+    }
+
+
+    // 'fn new_unchecked' creates the new 'ElementaryCubicPath' object from the input argument without performing any check on it.
+    // The input argument 'v' must satisfy the requirements to be the member 'data' (See the struct definition).
+    // This method checks whether these conditions are met and panics if not. If the caller is 100% sure that these conditions are 
+    // met and would like to improve the performance, then 'new_unchecked' might be used instead.
+    fn new_checked(v: util::SortedArray<N, [usize; 2]>) -> Self {
+        // The input argument has to be sorted by the first element, by the order of usize.
+        assert!(
+            v.iter().zip(v.iter().skip(1)).all(|([a,_],[b,_])| a < b),
+            "The input argument has to be sorted by the first element, by the order of usize, but it is not;  {:?}",
+            v
+        );
+
+        // The input argument has to have distinct elements.
+        assert!(
+            {
+                let mut elements: Vec<_> = v.iter().flatten().collect();
+                elements.sort();
+                elements.iter().zip(elements.iter().skip(1)).all(|(a,b)| a != b )
+            },
+            "The input argument has to have distinct elements, but it is not;  {:?}",
+            v
+        );
+
+
+        ElementaryCubicPath{ data: v }
+    }
+
+
+    // 'fn act_on(&mut p)' takes in the mutable reference of distinct (but not necesarily sorted) points and moves 'p' 
+    // by the action of the path 'self'. This method requires that;
+    //     (1) 'p' be a set of DISTINT points, and that
+    //     (2) 'self[..][0]' be contained in 'p'.
+    // However, it does not internally check these conditions because the struct is private. 
+    fn act_on(&self, p: &mut [usize; N]) {
+        // 'self[..][0]' must be sorted by the order of 'usize'.
+        debug_assert!(
+            self.data.iter().map(|[a,_]| a)
+                .zip(self.data.iter().map(|[a,_]| a))
+                .all(|(x,y)| x < y),
+            "'self.data[..][0]' must be sorted by the order of 'usize', but it is {:?}",
+            self.data
+        );
+
         // 'p' must be an array of (unsorted) distinct points
         debug_assert!({
             let mut q = p.clone();
             q.sort();
-            q.into_iter().zip( q.into_iter().skip(1) ).all(|(a, b)| a < b )
-        }, "p={p:?}");
+            q.iter().zip( q.iter().skip(1) ).all(|(&a, &b)| a < b )
+        }, "'p' must be an array of (unsorted) distinct points, but p={p:?}");
 
         // in order for 'self' to be able to act on 'p', start of 'self' must be contained in 'p'
         debug_assert!(
-            self.iter().all(|[s,_]| p.iter().any(|x| s==x ) ),
+            self.data.iter().all(|[s,_]| p.iter().any(|x| s==x ) ),
             "self={self:?}, p={p:?}"
         );
 
         // send each vertex to the goal
         for x in p {
-            if let Ok(idx) = self.binary_search_by_key(x, |&[a, _]| a ) {
-                *x = self[idx][1]
+            if let Ok(idx) = self.data.binary_search_by_key(x, |&[a, _]| a ) {
+                *x = self.data[idx][1]
             };
         }
-    }
-    
-    fn from_morse_cube(c: &MorseCube<N>) -> (Self, [[usize; N];2]) {
-        assert!(c.edges.len()==1, "a cubic path can be created only if the cube is 1-dimensional, but it is {} dimensional. cube={c:?}", c.edges.len());
-
-        let edge = c.edges[0];
-
-        let mut start = c.vertices;
-        start.add(edge[0]);
-
-        let mut end = c.vertices;
-        end.add(edge[1]);
-
-        let out = {
-            let mut out = ElementaryCubicPath::new();
-            out.add_without_sort(edge);
-            out
-        };
-
-        (out, [start.data, end.data])
-    }
-
-
-    // // This function takes two 'ElementaryCubicPath' by reference and returns a composition if the two paths are composable enclosed in Ok().
-    // // Otherwise, it will return 'Err(())'.
-    // // The returned path might be an identity path.
-    // pub fn composed_with(&self, other: &Self) -> Result<Self, ()> {
-    //     let mut out = self.0;
-
-    //     for out_handle in &mut out {
-    //         // Check whether or not the path is composable at the point.
-    //         // We can use the binary search because the array is ordered by the start of the path
-    //         let idx = if let Ok(idx) = other.binary_search_by_key( &out_handle[1], |[a,_]| *a ) {
-    //             idx
-    //         } else {
-    //             return Err(())
-    //         };
-
-    //         // compute the composition
-    //         *out_handle = other[idx];
-    //     }
-
-    //     Ok(Self(out))
-    // }
-
-    fn is_identity(&self) -> bool {
-        self.len==0
     }
 }
 
 
+
+// 'CubicPath' represents an 
 #[derive(Clone)]
 pub struct CubicPath<const N: usize> {
+    // 'path' represents the a from 'start' to 'end'.
     path: Vec<ElementaryCubicPath<N>>,
-
-    // 'start' is the start position of the path. It must be sorted.
-    start: [usize; N],
-
-    // 'end' is the end position of the path. It is in general not sorted.
-    end: [usize; N],
+    
+    // 'start' is the start configuration of the path.
+    // It must have 'N' distinct elements.
+    start: SortedArray<N, usize>,
+    
+    // 'end' is the end configuration of the path. 
+    // It must have 'N' distinct elements.
+    end: SortedArray<N, usize>,
+    
+    // 'end' is set-wise the same as 'self.act_on(&mut [usize, N]::try_from( start_usize ))'.
 }
 
 impl<const N: usize> Deref for CubicPath<N> {
     type Target = Vec<ElementaryCubicPath<N>>;
     fn deref(&self) -> &Self::Target {
         &self.path
-    }
-}
-
-impl<const N: usize> DerefMut for CubicPath<N> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.path
     }
 }
 
@@ -361,7 +314,82 @@ impl<const N: usize> Debug for CubicPath<N> {
 }
 
 impl<const N: usize> CubicPath<N> {
-    pub fn act_on(&self, p: &mut [usize; N]) {
+    // 'fn new_unchecked' creates a new "CubicPath" object from the two input arguments without checking them.
+    // The input arguments 'start' and 'end' must be the sorted array of 'N' distinc elements, 
+    // but function does not check these conditions.
+    fn new_unchecked(path: Vec<ElementaryCubicPath<N>>, start: SortedArray<N, usize>, end: SortedArray<N, usize>) -> Self {
+        // 'start' must have 'N' elements, but this method does not check it.
+        debug_assert!(
+            start.len() == N,
+            "'start' must have 'N' elements, but it has only {} elements. 'start' = {:?}",
+            start.len(),
+            start
+        );
+
+        // The elements of 'start' must be distinct, but this method does not check it.
+        debug_assert!(
+            start.iter().zip(start.iter().skip(1)).all(|(a,b)| a!=b ),
+            "The elements of 'start' must be distinct, but they are not: 'start' = {:?}",
+            start
+        );
+
+        // 'end' must have 'N' elements, but this method does not check it.
+        debug_assert!(
+            end.len() == N,
+            "'end' must have 'N' elements, but it has only {} elements. 'end' = {:?}",
+            end.len(),
+            end
+        );
+
+        // The elements of 'end' must be distinct, but this method does not check it.
+        debug_assert!(
+            end.iter().zip(end.iter().skip(1)).all(|(a,b)| a!=b ),
+            "The elements of 'end' must be distinct, but they are not: 'end' = {:?}",
+            end
+        );
+
+        Self { path, start, end }
+    }
+
+
+    // 'fn new_checked' creates a new "CubicPath" object from the two input arguments.
+    // The input arguments 'start' and 'end' must be the sorted array of 'N' distinc elements, 
+    // and this function panics if these condition are not met.
+    fn new_checked(path: Vec<ElementaryCubicPath<N>>, start: SortedArray<N, usize>, end: SortedArray<N, usize>) -> Self {
+        // check that 'start' has 'N' elements.
+        assert!(
+            start.len() == N,
+            "'start' must have 'N' elements, but it has only {} elements. 'start' = {:?}",
+            start.len(),
+            start
+        );
+
+        // check that the elements of 'start' are distinct.
+        assert!(
+            start.iter().zip(start.iter().skip(1)).all(|(a,b)| a!=b ),
+            "The elements of 'start' must be distinct, but they are not: 'start' = {:?}",
+            start
+        );
+
+        // check that 'end' has 'N' elements.
+        assert!(
+            end.len() == N,
+            "'end' must have 'N' elements, but it has only {} elements. 'end' = {:?}",
+            end.len(),
+            end
+        );
+
+        // check that the elements of 'end' are distinct.
+        assert!(
+            end.iter().zip(end.iter().skip(1)).all(|(a,b)| a!=b ),
+            "The elements of 'end' must be distinct, but they are not: 'end' = {:?}",
+            end
+        );
+
+        Self { path, start, end }
+    }
+
+    fn act_on(&self, p: &mut [usize; N]) {
         for e in self.iter() {
             e.act_on(p);
         }
@@ -369,119 +397,20 @@ impl<const N: usize> CubicPath<N> {
 
     pub fn composed_with(mut self, mut other: Self) -> Self {
 
-        // 'self.end' must coinside with 'other.start' setwize.
-        // 'self.start' is sorted, but 'self.end' is in general not sorted.
+        // 'self.end' must coinside with 'other.start'.
         debug_assert!(
-            {
-                let mut end = self.end;
-                end.sort();
-                end == other.start
-            },
-            "cannot compose two path. path1 has end = {:?}, \nbut path2 has start = {:?}.",
+            self.end == other.start,
+            "cannot compose the two paths. path1 has end = {:?}, \nbut path2 has start = {:?}.",
             self.end, other.start
         );
 
-        self.append(&mut other);
+        self.path.append(&mut other.path);
 
-        let mut end = self.start;
-        self.act_on(&mut end);
-        self.end = end;
+
         self.reduce_to_geodesic()
-        // self
     }
 
-    // pub fn reduce_to_geodesic(self) -> Self {
-    //     // do the path reduction untill the path cannnot be reduced anymore.
-    //     let mut path_length = self.len();
-    //     let mut path = self.reduce();
-
-    //     while path_length != path.len() {
-    //         path_length = path.len();
-    //         path = self.reduce();
-    //     }
-    //     path
-    // }
-
-    // pub fn reduce(self) -> Self {
-    //     if self.is_empty() {return self};
-
-    //     let mut reduced_path = vec![self[0]];
-    //     reduced_path.reserve( self.len() );
-        
-    //     for f in self.into_iter().skip(1) {
-    //         if reduced_path.is_empty() {
-    //             reduced_path.push( f );
-    //             continue;
-    //         }
-
-    //         // if 'reduced_path' is nonempty, then 'reduced_path' compute the composition at the end of 'reduced_path'.
-    //         if let Ok(h) = reduced_path.last().unwrap().composed_with( &f ) {
-    //             if h.is_identity() {
-    //                 reduced_path.pop();
-    //             } else {
-    //                 *reduced_path.last_mut().unwrap() = h;
-    //             }
-    //         } else {
-    //             // if 'f' cannot be composed with the last element, then simply push 'f' at the end.
-    //             reduced_path.push( f );
-    //         };
-    //     }
-
-    //     Self( reduced_path )
-    // }
-
     fn reduce_to_geodesic(self) -> Self {
-        // let mut out = Vec::new();
-
-        // for mut f in self.0 {
-        //     if out.is_empty() {
-        //         out.push( f );
-        //         continue;
-        //     }
-
-            
-        //     for edge_handle in f.0.iter_mut().filter(|[x,y]| x!=y ) {
-        //         let mut identity_path_idx = Vec::new();
-
-        //         let [start, end] = *edge_handle;
-                
-        //         // check if the edge motion can be brought to front or not.
-        //         let mut prev_handle = edge_handle;
-        //         for (i, curr_path) in out.iter_mut().enumerate().rev() {
-        //             if let Ok(j) = curr_path.binary_search_by_key(&start, |[s,_]| *s) {
-        //                 prev_handle[0] = end;
-        //                 prev_handle = &mut curr_path[j];
-        //                 prev_handle[1] = end;
-        //             } else {
-        //                 if let Ok(j) = curr_path.binary_search_by_key(&end, |[s,_]| *s) {
-        //                     // then the edge motions cancel out
-        //                     prev_handle[0] = end;
-        //                     curr_path[j][1] = end;
-
-        //                     // Now 'curr_path' might be an identity. In this case remember to erase it later.
-        //                     // if curr_path.is_identity() {
-        //                     //     identity_path_idx.push(i);
-        //                     // }
-        //                 } else {
-        //                     // otherwise, we leave everything as is
-        //                 }
-        //                 break;
-        //             };
-        //         }
-
-        //         identity_path_idx.sort();
-        //         debug_assert!(identity_path_idx.iter().zip(identity_path_idx.iter().skip(1)).all(|(x, y)| x!=y));
-        //         for idx in identity_path_idx.into_iter().rev() {
-        //             out.remove(idx);
-        //         }
-        //     }
-
-        //     // Now 'f' might be changed.
-        //     // add 'f' to out if 'f' is not an identity. 
-        //     if !f.is_identity() {
-        //         out.push(f)
-        //     }
-        // }
         let (start, end) = (self.start, self.end);
         let mut out = Vec::new();
 
@@ -491,13 +420,13 @@ impl<const N: usize> CubicPath<N> {
                 continue;
             }
 
-            let mut new_motion = ElementaryCubicPath::new();
-            for [v, w] in f.into_iter() {
-                if let Some(non_commuting_idx) = (0..out.len()).rev().find(|&i| out[i].iter().any(|&[x, y]| v==x || v==y || w==x || w==y ) ) {
+            let mut new_motion = ElementaryCubicPath::identity();
+            for [v, w] in f.data.into_iter() {
+                if let Some(non_commuting_idx) = (0..out.len()).rev().find(|&i| out[i].data.iter().any(|&[x, y]| v==x || v==y || w==x || w==y ) ) {
                     let non_commuting_motion = &mut out[non_commuting_idx];
-                    if let Ok(idx) = non_commuting_motion.binary_search(&[w, v] ) {
+                    if let Ok(idx) = non_commuting_motion.data.binary_search(&[w, v] ) {
                         // if 'non_commuting_motion' contains the inverse motion of [v,w], remove it from 'non_commuting_motion'
-                        non_commuting_motion.remove(idx);
+                        non_commuting_motion.data.remove(idx);
                         
                         // remove 'non_commuting_motion' if the motion is now the identity motion
                         if non_commuting_motion.is_identity() {
@@ -506,14 +435,14 @@ impl<const N: usize> CubicPath<N> {
                     } else {
                         // if 'non_commuting_motion' does not contain the inverse
                         if non_commuting_idx == out.len()-1 {
-                            new_motion.add_without_sort([v,w]);
+                            new_motion.data.push([v,w]);
                         } else {
-                            out[non_commuting_idx+1].add([v,w]);
+                            out[non_commuting_idx+1].data.insert([v,w]);
                         }
                     }
                 } else {
                     // if '[v,w]' commutes with every motion in 'out', then insert the motion at the front.
-                    out[0].add([v,w]);
+                    out[0].data.insert([v,w]);
                 }
             }
 
@@ -530,24 +459,60 @@ impl<const N: usize> CubicPath<N> {
             end
         }
     }
+
+
+    // 'fn get_geodesic_between' computes the path.
+    fn get_geodesic_between([p,q]: [SortedArray<N, usize>; 2]) -> Self {
+        s
+    }
 }
 
 pub struct MorsePath<'a, const N: usize> {
-    // 'start' is sorted at any given time.
-    start: [usize; N],
+    // 'start' is the start configuration of the path.
+    // It always has 'N' distinct elements.
+    start: SortedArray<N , usize>,
 
-    // 'end' is in general not sorted.
-    end: [usize; N],
+    // 'end' is the end configuration of the path.
+    // It always has 'N' distinct elements.
+    end: SortedArray<N , usize>,
 
     path: Vec<MorseCube<N>>,
     graph: &'a RawSimpleGraph,
 }
 
 impl<'a, const N: usize> MorsePath<'a, N> {
-    pub fn new(start: [usize; N], end: [usize; N], graph: &'a RawSimpleGraph) -> Self {
+
+    // 'fn new' creates a new "MorsePath" object from the two input arguments.
+    // The input arguments must be the sorted array of 'N' distinc elements, and this function panics if these condition are not met. 
+    pub fn new(start: SortedArray<N, usize>, end: SortedArray<N, usize>, graph: &'a RawSimpleGraph) -> Self {
+        // check that 'start' has 'N' elements.
         assert!(
-            start.iter().zip(start.iter().skip(1)).all(|(x,y)| x<y ),
-            "'start' must be sorted, but it is not. start = {start:?}."
+            start.len() == N,
+            "'start' must have 'N' elements, but it has only {} elements. 'start' = {:?}",
+            start.len(),
+            start
+        );
+
+        // check that the elements of 'start' are distinct.
+        assert!(
+            start.iter().zip(start.iter().skip(1)).all(|(a,b)| a!=b ),
+            "The elements of 'start' must be distinct, but they are not: 'start' = {:?}",
+            start
+        );
+
+        // check that 'end' has 'N' elements.
+        assert!(
+            end.len() == N,
+            "'end' must have 'N' elements, but it has only {} elements. 'end' = {:?}",
+            end.len(),
+            end
+        );
+
+        // check that the elements of 'end' are distinct.
+        assert!(
+            end.iter().zip(end.iter().skip(1)).all(|(a,b)| a!=b ),
+            "The elements of 'end' must be distinct, but they are not: 'end' = {:?}",
+            end
         );
 
         Self {
@@ -562,14 +527,11 @@ impl<'a, const N: usize> MorsePath<'a, N> {
         self.path.push(c);
     }
 
-    pub fn compose(&mut self, mut other: MorsePath<N>) {
-        self.path.append(&mut other.path);
-    }
 
     pub fn get_geodesic(&'a self) -> CubicPath<N> {
         let start_path = {
             let mut path = VecDeque::new();
-            let base = get_edge_path_recc::<N, true>(&self.start, &mut path, self.graph);
+            get_edge_path_recc::<N, true>(&self.start, &mut path, self.graph);
             let path: Vec<_> = path.into();
             CubicPath{ path, start: self.start, end: base }
         };
@@ -594,7 +556,7 @@ impl<'a, const N: usize> MorsePath<'a, N> {
 mod morse_path_test {
     // 'N' is the number of robots
     const N: usize = 5;
-    use crate::{ graph_collection, graphics, MorsePath, MorseCube, SortedArray };
+    use crate::{ graph_collection, graphics, MorsePath, MorseCube, util::SortedArray };
 
     // #[test]
     fn morse_path() -> Result<(), Box<dyn std::error::Error>> {
@@ -629,23 +591,20 @@ mod morse_path_test {
 }
 
 
-fn get_edge_path_recc<const N: usize, const FORWARD: bool>(points: &[usize; N], path: &mut VecDeque<ElementaryCubicPath<N>>, graph: &RawSimpleGraph) -> [usize; N] {
-    // points must be ordered, because we will use the binary search on it.
-    debug_assert!(
-        points.into_iter().zip(points.into_iter().skip(1)).all(|(p, q)| p < q ),
-        "points={points:?} \nhave to be ordered at this point, but it is not."
-    );
-
-
-    // base case
+// 'fn get_edge_path_recc' recursively computes the path that connects 'points' and the critical 0-cell.
+// The resulting path is stored in the 'path'.
+// The direction of the path should be specified by the caller by the 'FORWARD' value; if 'FORWARD' is true (resp. false), then the path 
+// will be created in such a way that the critical 0-cell comes at first (resp. at last). 
+fn get_edge_path_recc<const N: usize, const FORWARD: bool>(points: &SortedArray<N, usize>, path: &mut VecDeque<ElementaryCubicPath<N>>, graph: &RawSimpleGraph) {
+    // The base case: If the path is created all the way to the critical 0-cell, then return.
     if points.iter().enumerate().all(|(i, &x)| i==x ) {
-        return *points;
+        return;
     }
 
     let (elementary_path, next_points) = {
-        let mut out = SortedArray::new();
-        let mut next_points = [0; N];
-        for (j, p) in points.iter().copied().enumerate() {
+        let mut out = util::SortedArray::new();
+        let mut next_points = SortedArray::new();
+        for &p in points.iter() {
             let next = graph.adjacent_vertices_iter(p)
                 .take_while(|&v| v < p)
                 .filter( |&v| graph.maximal_tree_contains([v, p]) )
@@ -656,7 +615,7 @@ fn get_edge_path_recc<const N: usize, const FORWARD: bool>(points: &[usize; N], 
             let next = if points.binary_search(&next).is_ok() {
                 p
             } else {
-                // Now 'p' can proceed to next if it is order-respecting.
+                // Now 'p' can proceed to 'next' if it is order-respecting.
                 if next+1 == p {
                     next
                 } else if points.iter().all(|q| !(next..p).contains(q) ) { // TODO: this can be more efficient
@@ -667,27 +626,29 @@ fn get_edge_path_recc<const N: usize, const FORWARD: bool>(points: &[usize; N], 
                 }
             };
 
+
+            // If 'p' is moving to another vertex, record the motion.
             if p != next {
                 if FORWARD {
-                    out.add([p, next]);
+                    out.insert([p, next]);
                 } else {
-                    out.add([next, p]);
+                    out.insert([next, p]);
                 };
             }
 
             // record 'next'
-            next_points[j] = next;
+            next_points.push( next );
         }
-        (ElementaryCubicPath( out ), next_points)
+        (ElementaryCubicPath{ data: out }, next_points)
     };
 
+    // record the motion in 'path'.
     if FORWARD {
         path.push_back( elementary_path );
     } else {
         path.push_front( elementary_path );
     }
 
-    // println!("next_points = {next_points:?}");
 
     // run the function recursively
     get_edge_path_recc::<N, FORWARD>(&next_points, path, graph)
