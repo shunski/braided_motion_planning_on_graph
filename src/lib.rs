@@ -1,9 +1,13 @@
 use std::{collections::VecDeque, fmt::Debug, usize};
 
+use augmented_graph::AugmentedGraph;
 use topo_spaces::graph::RawSimpleGraph;
 use util::SortedArray;
 
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops,
+    cmp
+};
 
 
 pub mod graph_collection;
@@ -159,8 +163,7 @@ impl<const N: usize> MorseCube<N> {
 #[derive(Clone, Copy)]
 struct ElementaryCubicPath<const N: usize> {
     // 'data' is a cube that represents a single (directed) step in the configuration space.
-    // It must be sorted by the first element of the elements, by the order of 'usize'.
-    // its elements must be distinct.
+    // All the 2*'N' elements must be distinct.
     data: util::SortedArray<N,[usize;2]>
 }
 
@@ -295,7 +298,7 @@ pub struct CubicPath<const N: usize> {
     // 'end' is set-wise the same as 'self.act_on(&mut [usize, N]::try_from( start_usize ))'.
 }
 
-impl<const N: usize> Deref for CubicPath<N> {
+impl<const N: usize> ops::Deref for CubicPath<N> {
     type Target = Vec<ElementaryCubicPath<N>>;
     fn deref(&self) -> &Self::Target {
         &self.path
@@ -315,7 +318,7 @@ impl<const N: usize> Debug for CubicPath<N> {
 
 impl<const N: usize> CubicPath<N> {
     // 'fn new_unchecked' creates a new "CubicPath" object from the two input arguments without checking them.
-    // The input arguments 'start' and 'end' must be the sorted array of 'N' distinc elements, 
+    // The input arguments 'start' and 'end' must be the sorted array of 'N' distinct elements, 
     // but function does not check these conditions.
     fn new_unchecked(path: Vec<ElementaryCubicPath<N>>, start: SortedArray<N, usize>, end: SortedArray<N, usize>) -> Self {
         // 'start' must have 'N' elements, but this method does not check it.
@@ -353,7 +356,7 @@ impl<const N: usize> CubicPath<N> {
 
 
     // 'fn new_checked' creates a new "CubicPath" object from the two input arguments.
-    // The input arguments 'start' and 'end' must be the sorted array of 'N' distinc elements, 
+    // The input arguments 'start' and 'end' must be the sorted array of 'N' distinct elements, 
     // and this function panics if these condition are not met.
     fn new_checked(path: Vec<ElementaryCubicPath<N>>, start: SortedArray<N, usize>, end: SortedArray<N, usize>) -> Self {
         // check that 'start' has 'N' elements.
@@ -410,6 +413,67 @@ impl<const N: usize> CubicPath<N> {
         self.reduce_to_geodesic()
     }
 
+
+    // 'fn let_end_flow_to' computes the path from 'self.end' to 'new_end' and compose it to 'self', given the certain conditions.
+    // This method guerantees that the resulting path be a geodesic if 'self' originally is.
+    // This method requires that: 
+    //     (1) the elements of 'new_end' be distinct, and that
+    //     (2) each 'self.end[i]' is a child of 'new_end[i]'.
+    // Internal checks on these will be performed in the method. If the user is 100% sure that these conditions are met,
+    // then 'let_end_flow_to_unchecked' can be used instead.
+    pub fn let_end_flow_to(&mut self, new_end: SortedArray<N, usize>, graph: &AugmentedGraph) {
+        // check that the elements of 'new_end' be distinct.
+        assert!(
+            new_end.iter().zip(new_end.iter().skip(1)).all(|(a,b)| a<b ),
+            "input argument 'new_end' must be an array of distinct elements, but it is not: new_end={new_end:?}."
+        );
+
+        // check that each 'self.end[i]' is a child of 'new_end[i]'.
+        assert!(
+            self.end.iter().zip(new_end.iter()).all(|(&a,&b)| graph.is_first_child_of_second(a, b) )
+        );
+
+
+        self.let_end_flow_to_unchecked(new_end, graph);
+    }
+
+
+    // 'fn let_end_flow_to' computes the path from 'self.end' to 'new_end' and compose it to 'self', given the certain conditions.
+    // This method guerantees that the resulting path be a geodesic if 'self' originally is.
+    // This method requires that: 
+    //     (1) elements of 'new_end' be distinct, and that
+    //     (2) each 'self.end[i]' is a child of 'new_end[i]'.
+    // Internal checks on these conditions will not be performed in the method. 
+    pub fn let_end_flow_to_unchecked(&mut self, new_end: SortedArray<N, usize>, graph: &AugmentedGraph) {
+        // the elements of 'new_end' must be distinct, but we do not check in this function.
+        debug_assert!(
+            new_end.iter().zip(new_end.iter().skip(1)).all(|(a,b)| a<b ),
+            "input argument 'new_end' must be an array of distinct elements, but it is not: new_end={new_end:?}."
+        );
+
+        // each 'self.end[i]' must be a child of 'new_end[i]', but we do not check in this function.
+        debug_assert!(
+            self.end.iter().zip(new_end.iter()).all(|(&a,&b)| graph.is_first_child_of_second(a, b) )
+        );
+
+        let mut curr_end = self.end;
+        while curr_end != new_end {
+            let mut elementary_path = SortedArray::<N, usize>::new();
+            for (&s, &g) in curr_end.iter().zip(new_end.iter()) {
+                // 's' must flow to 'g' if they are not the same.
+                if s == g {continue;}
+
+                CONTINUE FROM THIS IMPLEMENTATION!
+                THEN PROCEED TO 'FN GET_GEODESIC_BETWEEN'
+            }
+
+            self.path.push( ElementaryCubicPath::new_unchecked(elementary_path) );
+        }
+
+        // update the end.
+        self.end = new_end;
+    }
+
     fn reduce_to_geodesic(self) -> Self {
         let (start, end) = (self.start, self.end);
         let mut out = Vec::new();
@@ -461,9 +525,66 @@ impl<const N: usize> CubicPath<N> {
     }
 
 
-    // 'fn get_geodesic_between' computes the path.
-    fn get_geodesic_between([p,q]: [SortedArray<N, usize>; 2]) -> Self {
-        s
+    // 'fn get_geodesic_between' computes the geodesic between the two (ordered) configurations 'p' and 'q' in the given graph.
+    fn get_geodesic_between([mut p, mut q]: [SortedArray<N, usize>; 2], graph: &AugmentedGraph) -> Self {
+        // 'meets' is the meets of points in 'p' and 'q' with mutiplicity reduced.
+        let meets: SortedArray<N,_> = {
+            // Collect the "meets". Note that 'meets' is already sorted because 'p' and 'q' are sorted.
+            let mut meets: Vec<_> = p.iter().zip(q.iter()).map(|(&s, &g)| graph.meet_of(s, g) ).collect();
+            
+
+            // Reduce multiplicity of 'meets'.
+            let multiplicity_count = 0;
+            let prev_meet = meets.first().unwrap() + 1; // initial value of 'prev_meet' only needs to be different from 'meets.first().unwrap()'.
+            for meet in &mut meets {
+                if &prev_meet == meet {
+                    // If 'meet' is not same as the previous 'meet' ('prev_meet'), then substract 'meet' by 'multiplicity_count'.
+                    *meet -= multiplicity_count;
+
+                    // update 'multiplicity_count'.
+                    multiplicity_count += 1;
+                } else {
+                    // If 'meet' is not same as the previous 'meet' ('prev_meet'), then no change will be made to 'meet'.
+
+                    // reset 'multiplicity_count'.
+                    multiplicity_count = 1;
+                    
+                    // update 'prev_meet'
+                    prev_meet = *meet;
+                }
+            }
+
+            // At this point, 'meets' is sorted and contains distinct elements.
+            debug_assert!(meets.iter().zip(meets.iter().skip(1)).all(|(i,j)| i<j ));
+
+            // Construct the SortedArray. This does not panic because 'meets' has 'N' elements and is sorted.
+            SortedArray::try_from( meets ).expect("")
+        };
+
+        
+        // 'construct_elementary_cubic_path' is the closue that construct the elementary cubic path from the points.
+        // This closure requires that the two vertices 'p[i]' and 'q[i]' are connected by an edge.
+        let construct_elementary_cubic_path = |[p, q]: [SortedArray<N, usize>; 2]| -> ElementaryCubicPath<N> {
+            let mut out = SortedArray::new();
+            for (&s, &g) in p.iter().zip(q.iter()) {
+                if s!=g {
+                    debug_assert!(
+                        graph.contains( cmp::min(s, g), cmp::max(s,g) ),
+                        "each pair of vertices must be connected by an edge, but it is not: p={p:?}, q={q:?}."
+                    );
+                    out.push([s,g]);
+                }
+            }
+            ElementaryCubicPath::new_unchecked( out )
+        };
+
+
+        let out = CubicPath::new_unchecked(path, start, end);
+        // compute the forward path p => meets.
+        while p == meets {
+            a
+        }
+
     }
 }
 

@@ -73,6 +73,7 @@ impl<const N: usize, T: Ord + Copy + fmt::Debug> TryFrom<Vec<T>> for SortedArray
     type Error = Self;
     // if 'value.len() > N', then this function creates an array of 'N' elements that contains first 'N' elements of 'value',
     // and encloses it in 'Err'
+    // This method will also panic is the iterator is not sorted.
     fn try_from(mut value: Vec<T>) -> Result<Self, Self::Error> {
         value.sort();
         let is_error = value.len() > N;
@@ -346,32 +347,13 @@ pub fn push<'a, const FORWARD: bool, const UPWARD: bool, const N: usize>(
 
 // private methods
 impl Point {
+    // 'fn update_meet' updates the "meet" of 'start' and 'goal'.
+    // This private method is typically used by other method when the struct 'Point' 
+    // is constructed or its 'start' and 'goal' values are modified.
+    // This method changes the value of 'meet' only, and the values of 'start' and 'goal' remain unchanged.
     fn update_meet(&mut self, graph: &AugmentedGraph ) {
-        // convert 'self.start' and 'self.goal' to the supremum of essential vertices less than them.
-        let mut start = match graph.essential_vertices.binary_search(&self.start) {
-            Ok(idx) => graph.essential_vertices[idx],
-            Err(idx) => graph.essential_vertices[idx-1],
-            // This does not panic because '0' is an essential vertex
-        };
-
-        let mut goal= match graph.essential_vertices.binary_search(&self.goal) {
-            Ok(idx) => graph.essential_vertices[idx],
-            Err(idx) => graph.essential_vertices[idx-1],
-            // This does not panic because '0' is an essential vertex
-        };
-
-        // Now find the 'meet' by tracing down the parents.
-        while start != goal {
-            let greater_point = if start > goal {
-                &mut start
-            } else {
-                &mut goal
-            };
-
-            *greater_point = graph.parent[*greater_point];
-        }
-
-        self.meet = self.start;
+        // update the meet.
+        self.meet = graph.meet_of(self.start, self.goal);
     }
 
 
