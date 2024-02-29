@@ -99,16 +99,47 @@ impl<const N: usize, T: Ord + Copy> SortedArray<N,T> {
     }
 
 
-    // 'push' adds input argument at the end. If the input argument is not greater than the
-    // largest element of the current cell, then this function panics. If the user is unsure whether or not this
+    // 'fn push' adds input argument at the end. If the input argument is not greater than or equal to the
+    // largest element of the current largest element, then this function panics. Thus if the user is unsure whether or not this
     // condition is satisfied, then 'insert' should be used instead.
     #[inline]
     pub fn push(&mut self, v: T) {
         // check the size of the array.
         assert!(self.len<N, "The array is full.");
 
-        // check that the input argument is greater than the largest element.
+        // check that the input argument is greater than or equal to the largest element.
         assert!(
+            self.is_empty() || self.last().unwrap() <= &v,
+            "The value cannot be added because it is less than the largest element."
+        );
+
+        // The following unsafe block is safe, because we have checked that the size of the array is less than 'N'.
+        unsafe{
+            self.data.as_mut_ptr().add(self.len).write(v);
+        }
+
+        self.len+=1;
+
+
+        debug_assert!(
+            self.iter().zip(self.iter().skip(1)).all(|(x,y)| x<=y ),
+            "self is not sorted."
+        );
+    }
+
+
+    // 'fn push_unchecked' adds input argument at the end without do checks. 
+    // Thus it is caller's responsivility to make sure the following:
+    //     (1) 'self' does not have 'N' elements.
+    //     (2) The input argument is greater than or equal to the largest element of the current largest element. 
+    // This function is unsafe because violation of (2) will cause an unsafe behavior. 
+    #[inline]
+    pub unsafe fn push_unchecked(&mut self, v: T) {
+        // check the size of the array.
+        debug_assert!(self.len<N, "The array is full.");
+
+        // check that the input argument is greater than or equal to the largest element.
+        debug_assert!(
             self.is_empty() || self.last().unwrap() <= &v,
             "The value cannot be added because it is less than the largest element."
         );
@@ -164,6 +195,35 @@ impl<const N: usize, T: Ord + Copy> SortedArray<N,T> {
     // ToDo: implement the IntoIter for this type (without using 'into_iter' of 'data').
     pub fn into_iter(self) -> impl Iterator<Item = T> { 
         self.data.into_iter().take(self.len)
+    }
+
+
+    // 'fn as_array' returns the underlying array.
+    // This method requires that 'self.len() == N' and panics if the condition is not satisfied.
+    pub fn as_array(self) -> [T; N] {
+        // check that 'self' has 'N' elements.
+        assert!(
+            self.len() == N,
+            "Cannnot cast to array because it has less than {N} elements."
+        );
+
+
+        self.data
+    }
+
+
+
+    // 'fn as_array_unchecked' returns the underlying array without any checks on the inputs.
+    // This method requires that 'self.len() == N' and violating this will cause an unsafe behavior because elements may not be initialized.
+    pub unsafe fn as_array_unchecked(self) -> [T; N] {
+        // 'self' must have 'N' elements, but this method does not check it.
+        debug_assert!(
+            self.len() == N,
+            "Cannnot cast to array because it has less than {N} elements."
+        );
+
+
+        self.data
     }
 }
 

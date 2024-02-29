@@ -5,8 +5,7 @@ use topo_spaces::graph::RawSimpleGraph;
 use util::SortedArray;
 
 use std::{
-    ops,
-    cmp
+    ops
 };
 
 
@@ -242,12 +241,12 @@ impl<const N: usize> ElementaryCubicPath<N> {
     }
 
 
-    // 'fn act_on(&mut p)' takes in the mutable reference of distinct (but not necesarily sorted) points and moves 'p' 
+    // 'fn act_unchecked(&mut p)' takes in the mutable reference of distinct (but not necesarily sorted) points and moves 'p' 
     // by the action of the path 'self'. This method requires that;
-    //     (1) 'p' be a set of DISTINT points, and that
+    //     (1) 'p' be a set of DISTINCT points, and that
     //     (2) 'self[..][0]' be contained in 'p'.
     // However, it does not internally check these conditions because the struct is private. 
-    fn act_on(&self, p: &mut [usize; N]) {
+    fn act_unchecked(&self, p: &mut [usize; N]) {
         // 'self[..][0]' must be sorted by the order of 'usize'.
         debug_assert!(
             self.data.iter().map(|[a,_]| a)
@@ -284,7 +283,8 @@ impl<const N: usize> ElementaryCubicPath<N> {
 // 'CubicPath' represents an 
 #[derive(Clone)]
 pub struct CubicPath<const N: usize> {
-    // 'path' represents the a from 'start' to 'end'.
+    // 'path' represents the a path from 'start' to 'end'.
+    // This must be a "path" from 'start' to 'end', that is, 'self.act([usize; N]::from(self.start))' is setwise the same as 'end'.
     path: Vec<ElementaryCubicPath<N>>,
     
     // 'start' is the start configuration of the path.
@@ -318,8 +318,10 @@ impl<const N: usize> Debug for CubicPath<N> {
 
 impl<const N: usize> CubicPath<N> {
     // 'fn new_unchecked' creates a new "CubicPath" object from the two input arguments without checking them.
-    // The input arguments 'start' and 'end' must be the sorted array of 'N' distinct elements, 
+    // The input arguments 'start' and 'end' must be the sorted array of 'N' distinct elements, and the other input argument
+    // 'path' must be well-defined as a path from 'start' to 'end'.
     // but function does not check these conditions.
+    #[inline(always)]
     fn new_unchecked(path: Vec<ElementaryCubicPath<N>>, start: SortedArray<N, usize>, end: SortedArray<N, usize>) -> Self {
         // 'start' must have 'N' elements, but this method does not check it.
         debug_assert!(
@@ -351,13 +353,24 @@ impl<const N: usize> CubicPath<N> {
             end
         );
 
+        // 'path' must be well-defined as a path from 'start' to 'end', but this method does not check it.
+        debug_assert!(
+            {
+                let mut start: [usize; N] = start.as_array();
+                for p in path { p.act_unchecked(&mut start); }
+                start.sort();
+                SortedArray::<N, usize>::from(start) == end
+            }
+        );
+
         Self { path, start, end }
     }
 
 
     // 'fn new_checked' creates a new "CubicPath" object from the two input arguments.
     // The input arguments 'start' and 'end' must be the sorted array of 'N' distinct elements, 
-    // and this function panics if these condition are not met.
+    // and this function panics if these conditions are not met.
+    #[inline(always)]
     fn new_checked(path: Vec<ElementaryCubicPath<N>>, start: SortedArray<N, usize>, end: SortedArray<N, usize>) -> Self {
         // check that 'start' has 'N' elements.
         assert!(
@@ -389,12 +402,82 @@ impl<const N: usize> CubicPath<N> {
             end
         );
 
+
+        // check that 'path' is well-defined as a path from 'start' to 'end'.
+        debug_assert!(
+            {
+                let mut start: [usize; N] = start.as_array();
+                for p in path { p.act_unchecked(&mut start); }
+                start.sort();
+                SortedArray::<N, usize>::from(start) == end
+            }
+        );
+
         Self { path, start, end }
     }
 
-    fn act_on(&self, p: &mut [usize; N]) {
+
+    // 'fn get_trivial_path_at' returns a trivial path at the input 'p', that is, path of length 0 that starts and ends at 'p'.
+    // This method requires that 'p' be the set of 'N' distinct points and panics if this is not satisfied. 
+    #[inline(always)]
+    pub fn get_trivial_path_at(p: SortedArray<N, usize>) -> Self {
+        // check that 'p' has 'N' elements.
+        assert!(
+            p.len() == N,
+            "'p' must have 'N' elements, but it has only {} elements. 'p' = {:?}",
+            p.len(),
+            p
+        );
+
+        // check that the elements of 'p' are distinct.
+        assert!(
+            p.iter().zip(p.iter().skip(1)).all(|(a,b)| a!=b ),
+            "The elements of 'p' must be distinct, but they are not: 'p' = {:?}",
+            p
+        );
+        
+        // 'path' will be the empty vector. This trivially satisfies the requirement for 'path'.
+        Self { path: Vec::new(), start: p, end: p }
+    }
+
+
+    // 'fn act' takes in a configuration of 'N' points and computes the action of the path on the configuration.
+    // This function requires that the input argument be a set of distinct (but not necessarily sorted) points.
+    pub fn act(&self, p: &mut [usize; N]) {
+        // check that the input argument be a set of distinct (but not necessarily sorted) points.
+        assert!( {
+                let mut p = p;
+                p.sort();
+                p.iter().zip(p.iter().skip(1)).all(|(a,b)| a < b)
+            },
+            "The input 'p' must be a set of distinct points, but they are not: p={:?}",
+            p 
+        );
+
         for e in self.iter() {
-            e.act_on(p);
+            // Note that having checked the condition above, the requirement for "fn ElementaryCubicPath::act_unchecked" 
+            // is satisfied at each iteration.
+            e.act_unchecked(p);
+        }
+    }
+
+    // 'fn act' takes in a configuration of 'N' points and computes the action of the path on the configuration without performing checks.
+    // This function requires that the input argument be a set of distinct (but not necessarily sorted) points, but it does not check the condition.
+    pub fn act_unchecked(&self, p: &mut [usize; N]) {
+        // the input argument must be a set of distinct (but not necessarily sorted) points, we do not check this.
+        debug_assert!( {
+                let mut p = p;
+                p.sort();
+                p.iter().zip(p.iter().skip(1)).all(|(a,b)| a < b)
+            },
+            "The input 'p' must be a set of distinct points, but they are not: p={:?}",
+            p 
+        );
+
+        for e in self.iter() {
+            // Note that having checked the condition above, the requirement for "fn ElementaryCubicPath::act_unchecked" 
+            // is satisfied at each iteration.
+            e.act_unchecked(p);
         }
     }
 
@@ -458,20 +541,77 @@ impl<const N: usize> CubicPath<N> {
 
         let mut curr_end = self.end;
         while curr_end != new_end {
-            let mut elementary_path = SortedArray::<N, usize>::new();
+            let mut elementary_path = SortedArray::<N, [usize; 2]>::new();
+
+            // 'next_end' will be 'curr_end' in the next iteration. Its values will be filled in during the following for-loop (one value in each iteration),
+            // and it will thus have length 'N' at the end of the present block. All the unsafe block that contains 'push_unchecked()' in the for-loop is
+            // safe, because it will be called exactly 'n' times, and 'curr_end' is sorted.
+            let mut next_end = SortedArray::new();
+
+
+            // iterating over points.
             for (&s, &g) in curr_end.iter().zip(new_end.iter()) {
                 // 's' must flow to 'g' if they are not the same.
-                if s == g {continue;}
+                if s == g {
+                    unsafe{ next_end.push_unchecked(s) }; // see the intialization of 'next_end' about the safety of this block.
+                    continue;
+                }
 
-                CONTINUE FROM THIS IMPLEMENTATION!
-                THEN PROCEED TO 'FN GET_GEODESIC_BETWEEN'
+                // find the vertex that 's' goes to next.
+                // Note that 's-1' below does not panic, since 0 <= 'g' < 's'.
+                let s_next = if graph.maximal_tree_contains([s-1, s]) {
+                    // if 's-1' is connected by an edge in the maximal tree, then flow to it.
+                    // Note that the edge ['s-1', 's'] must be order-respecting in this case. Hence, we do not need to do any check on this.
+                    s-1
+                } else {
+                    // otherwise, 's' will flow to some essential vertex.
+                    // Note that the following 'unwrap()' does not panic since 's' is adjacent to an essentail vertex smaller than 's'
+                    // and since 's' is strictly positive.
+                    let s_next = *graph.essential_vertices.iter().find(|&&x| graph.maximal_tree_contains([x, s]) ).unwrap();
+
+                    // flow to 's_next' if the edge ['s', 's_next'] is order-respecting, or 's_next' occupied by another point of 'curr_end'. 
+                    // Otherwise, skip it because we have to wait.
+                    let result_i = curr_end.binary_search(&s_next);
+                    let j = curr_end.binary_search(&s).err().unwrap(); // This should not panic, because 's' is in 'curr_end'.
+                    if result_i.is_err() && result_i.err().unwrap() != j {
+                        // This means that the edge ['s', 's_next'] is order-respecting, and 's_next' is not occupied because 'result_i' is not 'Ok(_)'. 
+                        // Thus flow through the edge.
+                        unsafe{ next_end.push_unchecked(s_next) }; // see the intialization of 'next_end' about the safety of this block.
+                        s_next
+                    } else {
+                        // Otherwise, update 'new_end' and skip.
+                        unsafe{ next_end.push_unchecked(s) }; // see the intialization of 'next_end' about the safety of this block.
+                        continue;
+                    }
+                };
+
+                // add the step to the 'elementary_path'.
+                // The following unsafe block is safe, because
+                //     (1) this for-loop iterates exactly 'N' times (so this block is called at most 'N' times), and because
+                //     (2) this '[s,s_next]' is always greater than the largest element as 'curr_end' is sorted.
+                unsafe{ elementary_path.push_unchecked([s,s_next])}; 
             }
 
             self.path.push( ElementaryCubicPath::new_unchecked(elementary_path) );
+
+            // Note that 'next_end' must have exactly 'N' elements at this point.
+            debug_assert!(
+                next_end.len() == N,
+                "'next_end.len()' must be 'N'={N}, but it is {}",
+                next_end.len()
+            );
+
+            // update 'curr_end'
+            curr_end = next_end;
         }
 
-        // update the end.
+        // update 'self.end'.
         self.end = new_end;
+    }
+
+
+    pub fn let_end_reverse_flow_to(&mut self, new_end: SortedArray<N, usize>, graph: &AugmentedGraph) {
+        impliment this function
     }
 
     fn reduce_to_geodesic(self) -> Self {
@@ -527,8 +667,8 @@ impl<const N: usize> CubicPath<N> {
 
     // 'fn get_geodesic_between' computes the geodesic between the two (ordered) configurations 'p' and 'q' in the given graph.
     fn get_geodesic_between([mut p, mut q]: [SortedArray<N, usize>; 2], graph: &AugmentedGraph) -> Self {
-        // 'meets' is the meets of points in 'p' and 'q' with mutiplicity reduced.
-        let meets: SortedArray<N,_> = {
+        // 'meets_without_multiplicity' is the meets of points in 'p' and 'q' with mutiplicity reduced.
+        let meets_without_multiplicity: SortedArray<N,_> = {
             // Collect the "meets". Note that 'meets' is already sorted because 'p' and 'q' are sorted.
             let mut meets: Vec<_> = p.iter().zip(q.iter()).map(|(&s, &g)| graph.meet_of(s, g) ).collect();
             
@@ -562,28 +702,8 @@ impl<const N: usize> CubicPath<N> {
         };
 
         
-        // 'construct_elementary_cubic_path' is the closue that construct the elementary cubic path from the points.
-        // This closure requires that the two vertices 'p[i]' and 'q[i]' are connected by an edge.
-        let construct_elementary_cubic_path = |[p, q]: [SortedArray<N, usize>; 2]| -> ElementaryCubicPath<N> {
-            let mut out = SortedArray::new();
-            for (&s, &g) in p.iter().zip(q.iter()) {
-                if s!=g {
-                    debug_assert!(
-                        graph.contains( cmp::min(s, g), cmp::max(s,g) ),
-                        "each pair of vertices must be connected by an edge, but it is not: p={p:?}, q={q:?}."
-                    );
-                    out.push([s,g]);
-                }
-            }
-            ElementaryCubicPath::new_unchecked( out )
-        };
-
-
-        let out = CubicPath::new_unchecked(path, start, end);
-        // compute the forward path p => meets.
-        while p == meets {
-            a
-        }
+        // 'forward_path' is the path from n
+        let forward_path = CubicPath::get_trivial_path_at(meets_without_multiplicity);
 
     }
 }
