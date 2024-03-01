@@ -4,9 +4,7 @@ use augmented_graph::AugmentedGraph;
 use topo_spaces::graph::RawSimpleGraph;
 use util::SortedArray;
 
-use std::{
-    ops
-};
+use std::ops;
 
 
 pub mod graph_collection;
@@ -25,13 +23,15 @@ pub struct MorseCube<const N: usize> {
     // edges (or vertices) quickly, even though the use of the memory is not the most efficient.
 
     // 'edges' is the set of edges in the cube.
-    // each element has two distinct elements sorted by the order of 'usize'.
+    // The i-th element '[v_i, w_i]' of 'edges' represents the directed, critical motion of a point on vertex 'v_i' to 'w_i'.
     edges: util::SortedArray<N, [usize; 2]>,
     
     // 'vertices' is the set of vertices in the cube.
     vertices: util::SortedArray<N, usize>,
 
-    // It must be true that 'N = self.edges.len() + self.vertices.len()' at any given time.
+    // Note that, at any given time, the struct members must satisfy:
+    //     (1) The union of 'edges' and 'vertices' must be a set of distinct points, and
+    //     (2) The sum of 'self.edges.len()' and 'self.vertices.len()' is 'N'.
 }
 
 
@@ -39,21 +39,20 @@ impl<const N: usize> MorseCube<N> {
     #[inline(always)]
     // 'fn new_unchecked' creates 'MorseCube' without performing any check on the input arguments.
     // This function reqiuires that;
-    //     (1) the sum of the size of 'edges' and 'vertices' be 'N', that
-    //     (2) each element in 'edges' be sorted by the order of 'usize', and that
-    //     (3) elements of 'edges' and 'vertices' be distinct.
+    //     (1) elements of 'edges' and 'vertices' be distinct, and that
+    //     (2) the sum of the size of 'edges' and 'vertices' be 'N'.
     // However, again, this method does not make sure these conditions are met.
     pub fn new_unchecked(edges: util::SortedArray<N, [usize; 2]>, vertices: util::SortedArray<N, usize>) -> Self {
+        // elements of 'edges' and 'vertices' must be distinct, but we do not check this in this function.
+        debug_assert!(
+            {
+                let mut v: Vec<_> = edges.iter().flatten().chain(vertices.iter()).collect();
+                v.sort();
+                v.iter().zip(v.iter().skip(1)).all(|(x,y)| x != y)
+            }
+        );
         // the size of 'edges' and 'vertices' must add up to 'N', but we do not check them in this function.
         debug_assert!( edges.len() + vertices.len() == N );
-        // each element in 'edges' must be sorted by the order of usize, but we do not check this in this function.
-        debug_assert!( edges.iter().all(|[a,b]| a < b ) );
-        // elements of 'edges' and 'vertices' must be distinct, but we do not check this in this function.
-        debug_assert!({
-            let mut v: Vec<_> = edges.iter().flatten().chain(vertices.iter()).collect();
-            v.sort();
-            v.iter().zip(v.iter().skip(1)).all(|(x,y)| x != y)
-        });
         
         Self { edges, vertices }
     }
@@ -61,22 +60,21 @@ impl<const N: usize> MorseCube<N> {
     #[inline]
     // 'fn new_checked' creates 'MorseCube' from edges and vertices.
     // This function reqiuires that;
-    //     (1) the sum of the size of 'edges' and 'vertices' be 'N', that
-    //     (2) each element in 'edges' be sorted by the order of 'usize', and that
-    //     (3) elements of 'edges' and 'vertices' be distinct.
+    //     (1) elements of 'edges' and 'vertices' be distinct, and that
+    //     (2) the sum of the size of 'edges' and 'vertices' be 'N'.
     // These conditions will be checked internally. If the caller is 100% sure that the conditions are met and would like 
     // to improve the performance by skipping these checks, 'fn new_unchecked' can be used instead.
     pub fn new_checked(edges: util::SortedArray<N, [usize; 2]>, vertices: util::SortedArray<N, usize>) -> Self {
+        // check that the elements of 'edges' and 'vertices' must be distinct. ToDo: This can be more efficient.
+        assert!(
+            {
+                let mut v: Vec<_> = edges.iter().flatten().chain(vertices.iter()).collect();
+                v.sort();
+                v.iter().zip(v.iter().skip(1)).all(|(x,y)| x != y)
+            }
+        );
         // check that the size of 'edges' and 'vertices' must add up to 'N'.
         assert!( edges.len() + vertices.len() == N );
-        // check that each element in 'edges' must be sorted by the order of usize.
-        assert!( edges.iter().all(|[a,b]| a < b ) );
-        // check that the elements of 'edges' and 'vertices' must be distinct. ToDo: This can be more efficient.
-        assert!({
-            let mut v: Vec<_> = edges.iter().flatten().chain(vertices.iter()).collect();
-            v.sort();
-            v.iter().zip(v.iter().skip(1)).all(|(x,y)| x != y)
-        });
         
         Self { edges, vertices }
     }
@@ -111,7 +109,7 @@ impl<const N: usize> MorseCube<N> {
     }
     
     pub fn get_edge_path(&self, graph: &RawSimpleGraph) -> CubicPath<N> {
-        let (critical_motion, [start, end]) = self.get_critical_path();
+        let (critical_motion, [start, end]) = self.get_critical_path_and_its_ends();
 
         let mut path = VecDeque::from([critical_motion]);
         
@@ -128,9 +126,9 @@ impl<const N: usize> MorseCube<N> {
     }
 
 
-    // 'fn get_critical_path' returns the motion of the critical 1-cell as an 'ElementaryCubicPath' and its ends as "[SortedArray<N, usize>; 2]".
+    // 'fn get_critical_path_and_its_ends' returns the motion of the critical 1-cell as an 'ElementaryCubicPath' and its ends as "[SortedArray<N, usize>; 2]".
     // This method panics if 'self' is not a 1-dimensional cube. (Note that the dimension of 'self' is 'self.edges.len()')
-    fn get_critical_path(&self) -> (ElementaryCubicPath<N>, [SortedArray<N, usize>; 2]) {
+    fn get_critical_path_and_its_ends(&self) -> (ElementaryCubicPath<N>, [SortedArray<N, usize>; 2]) {
         assert!(
             self.edges.len()==1, 
             "a cubic path can be created only if the cube is 1-dimensional, but it is {} dimensional. cube={self:?}", 
@@ -245,7 +243,7 @@ impl<const N: usize> ElementaryCubicPath<N> {
     // by the action of the path 'self'. This method requires that;
     //     (1) 'p' be a set of DISTINCT points, and that
     //     (2) 'self[..][0]' be contained in 'p'.
-    // However, it does not internally check these conditions because the struct is private. 
+    // However, it does not internally check these conditions. 
     fn act_unchecked(&self, p: &mut [usize; N]) {
         // 'self[..][0]' must be sorted by the order of 'usize'.
         debug_assert!(
@@ -274,6 +272,31 @@ impl<const N: usize> ElementaryCubicPath<N> {
             if let Ok(idx) = self.data.binary_search_by_key(x, |&[a, _]| a ) {
                 *x = self.data[idx][1]
             };
+        }
+    }
+
+    // 'fn act_setwise_unchecked()' takes in the mutable reference 'p' of distinct sorted points and moves it 
+    // by the action of the path 'self' while keeping it sorted. This method requires that;
+    //     (1) 'p' be a set of DISTINCT points, and that
+    //     (2) 'self[..][0]' be contained in 'p'.
+    // However, it does not internally check these conditions. 
+    fn act_setwise_unchecked(&self, p: &mut SortedArray<N, usize>) {
+        // 'p' must be an array of distinct points, but we do not check in this function.
+        debug_assert!(
+            p.iter().zip( p.iter().skip(1) ).all(|(&a, &b)| a < b ),
+            "'p' must be an array of distinct points, but it is not: p={p:?}."
+        );
+
+        // In order for 'self' to be able to act on 'p', start of 'self' must be contained in 'p', but we do not check in this function.
+        debug_assert!(
+            self.data.iter().all(|[s,_]| p.binary_search(&s).is_ok() ),
+            "self={self:?}, p={p:?}"
+        );
+
+
+        for [s,g] in self.data.iter() {
+            let s_idx = p.binary_search(&s).ok().unwrap();
+            p.modify(s_idx, *g);
         }
     }
 }
@@ -500,11 +523,19 @@ impl<const N: usize> CubicPath<N> {
     // 'fn let_end_flow_to' computes the path from 'self.end' to 'new_end' and compose it to 'self', given the certain conditions.
     // This method guerantees that the resulting path be a geodesic if 'self' originally is.
     // This method requires that: 
-    //     (1) the elements of 'new_end' be distinct, and that
-    //     (2) each 'self.end[i]' is a child of 'new_end[i]'.
+    //     (1) 'new_end' have 'N' elements, that
+    //     (2) the elements of 'new_end' be distinct, and that
+    //     (3) each 'self.end[i]' is a child of 'new_end[i]'.
     // Internal checks on these will be performed in the method. If the user is 100% sure that these conditions are met,
     // then 'let_end_flow_to_unchecked' can be used instead.
-    pub fn let_end_flow_to(&mut self, new_end: SortedArray<N, usize>, graph: &AugmentedGraph) {
+    pub fn let_end_flow_to(&mut self, new_end: &SortedArray<N, usize>, graph: &AugmentedGraph) {
+        // check that 'new_end' has 'N' elements.
+        assert!(
+            new_end.len() == N,
+            "The input argument 'new_end' must have 'N' distinct elements, but is does not. new_end={new_end:?}"
+        );
+
+        
         // check that the elements of 'new_end' be distinct.
         assert!(
             new_end.iter().zip(new_end.iter().skip(1)).all(|(a,b)| a<b ),
@@ -517,17 +548,29 @@ impl<const N: usize> CubicPath<N> {
         );
 
 
-        self.let_end_flow_to_unchecked(new_end, graph);
+        // Now call 'fn let_end_flow_to_unchecked', which is the unchecked version of this funtion.
+        // Because we have explicitly checked the condtions, it is safe to call the unchecked version.
+        unsafe{
+            self.let_end_flow_to_unchecked(new_end, graph)
+        }
     }
 
 
     // 'fn let_end_flow_to' computes the path from 'self.end' to 'new_end' and compose it to 'self', given the certain conditions.
     // This method guerantees that the resulting path be a geodesic if 'self' originally is.
     // This method requires that: 
-    //     (1) elements of 'new_end' be distinct, and that
-    //     (2) each 'self.end[i]' is a child of 'new_end[i]'.
-    // Internal checks on these conditions will not be performed in the method. 
-    pub fn let_end_flow_to_unchecked(&mut self, new_end: SortedArray<N, usize>, graph: &AugmentedGraph) {
+    //     (1) 'new_end' have 'N' elements, that
+    //     (2) elements of 'new_end' be distinct, and that
+    //     (3) each 'self.end[i]' is a child of 'new_end[i]'.
+    // Internal checks on these conditions will not be performed in the method, and because some unsafe code depends on these conditions,
+    // this function is unsafe.
+    pub unsafe fn let_end_flow_to_unchecked(&mut self, new_end: &SortedArray<N, usize>, graph: &AugmentedGraph) {
+        // The input 'new_end' must have 'N' elements, we do check in this funtion.
+        debug_assert!(
+            new_end.len() == N,
+            "The input argument 'new_end' must have 'N' distinct elements, but is does not. new_end={new_end:?}"
+        );
+        
         // the elements of 'new_end' must be distinct, but we do not check in this function.
         debug_assert!(
             new_end.iter().zip(new_end.iter().skip(1)).all(|(a,b)| a<b ),
@@ -539,18 +582,19 @@ impl<const N: usize> CubicPath<N> {
             self.end.iter().zip(new_end.iter()).all(|(&a,&b)| graph.is_first_child_of_second(a, b) )
         );
 
-        let mut curr_end = self.end;
-        while curr_end != new_end {
+
+        // The following while-loop succesively updates 'self.end' and 'self.end' will be 'new_end' at last.
+        while &self.end != new_end {
             let mut elementary_path = SortedArray::<N, [usize; 2]>::new();
 
             // 'next_end' will be 'curr_end' in the next iteration. Its values will be filled in during the following for-loop (one value in each iteration),
             // and it will thus have length 'N' at the end of the present block. All the unsafe block that contains 'push_unchecked()' in the for-loop is
-            // safe, because it will be called exactly 'n' times, and 'curr_end' is sorted.
+            // safe, because it will be called exactly 'N' times and because 'curr_end' is sorted.
             let mut next_end = SortedArray::new();
 
 
             // iterating over points.
-            for (&s, &g) in curr_end.iter().zip(new_end.iter()) {
+            for (&s, &g) in self.end.iter().zip(new_end.iter()) {
                 // 's' must flow to 'g' if they are not the same.
                 if s == g {
                     unsafe{ next_end.push_unchecked(s) }; // see the intialization of 'next_end' about the safety of this block.
@@ -571,12 +615,11 @@ impl<const N: usize> CubicPath<N> {
 
                     // flow to 's_next' if the edge ['s', 's_next'] is order-respecting, or 's_next' occupied by another point of 'curr_end'. 
                     // Otherwise, skip it because we have to wait.
-                    let result_i = curr_end.binary_search(&s_next);
-                    let j = curr_end.binary_search(&s).err().unwrap(); // This should not panic, because 's' is in 'curr_end'.
+                    let result_i = self.end.binary_search(&s_next);
+                    let j = self.end.binary_search(&s).err().unwrap(); // This should not panic, because 's' is in 'curr_end'.
                     if result_i.is_err() && result_i.err().unwrap() != j {
                         // This means that the edge ['s', 's_next'] is order-respecting, and 's_next' is not occupied because 'result_i' is not 'Ok(_)'. 
                         // Thus flow through the edge.
-                        unsafe{ next_end.push_unchecked(s_next) }; // see the intialization of 'next_end' about the safety of this block.
                         s_next
                     } else {
                         // Otherwise, update 'new_end' and skip.
@@ -584,6 +627,9 @@ impl<const N: usize> CubicPath<N> {
                         continue;
                     }
                 };
+
+                // update 'next_end'
+                unsafe{ next_end.push_unchecked(s_next) }; // see the intialization of 'next_end' about the safety of this block.
 
                 // add the step to the 'elementary_path'.
                 // The following unsafe block is safe, because
@@ -602,16 +648,128 @@ impl<const N: usize> CubicPath<N> {
             );
 
             // update 'curr_end'
-            curr_end = next_end;
+            self.end = next_end;
         }
+    }
 
-        // update 'self.end'.
-        self.end = new_end;
+    // 'fn let_end_reverse_flow_to' computes the path from 'self.end' to 'new_end' and composes it to 'self', given certain conditions are met.
+    // There is the unique path determined by the discrete flow from 'new_end' to 'self.end', and the this method computes the inverse of it.
+    // Note that computing the reverse flow is both simpler and more efficient than computing the flow because points do not need wait for other points
+    // smaller than them (c.f. 'fn let_end_flow_to').
+    // Furthermore, this method guerantees that the resulting path be a geodesic if 'self' originally is.
+    // This method requires that: 
+    //     (1) 'new_end' have 'N' elements, that
+    //     (2) the elements of 'new_end' be distinct, and that
+    //     (3) each 'new_end[i]' is a child of 'self.end[i]'.
+    // Internal checks on these will be performed in the method. If the user is 100% sure that these conditions are met,
+    // then 'let_end_reverse_flow_to_unchecked' can be used instead.
+    pub fn let_end_reverse_flow_to(&mut self, new_end: &SortedArray<N, usize>, graph: &AugmentedGraph) {
+        // check that 'new_end' has 'N' elements.
+        assert!(
+            new_end.len() == N,
+            "The input argument 'new_end' must have 'N' distinct elements, but is does not. new_end={new_end:?}"
+        );
+
+        // check that the elements of 'new_end' are distinct.
+        assert!(
+            new_end.iter().zip(new_end.iter().skip(1)).all(|(a,b)| a<b ),
+            "The input argument 'new_end' must be an array of distinct elements, but it is not: new_end={new_end:?}."
+        );
+
+        // check that each 'new_end[i]' is a child of 'self.end[i]'.
+        assert!(
+            new_end.iter().zip(self.end.iter()).all(|(&a,&b)| graph.is_first_child_of_second(a, b) )
+        );
+
+
+        // Now call 'fn let_end_reverse_flow_to_unchecked', which is the unchecked version of this funtion.
+        // Because we have explicitly checked the condtions, it is safe to call the unchecked version.
+        unsafe{
+            self.let_end_reverse_flow_to_unchecked(&new_end, graph);
+        }
     }
 
 
-    pub fn let_end_reverse_flow_to(&mut self, new_end: SortedArray<N, usize>, graph: &AugmentedGraph) {
-        impliment this function
+    // 'fn let_end_reverse_flow_to_unchecked' computes the path from 'self.end' to 'new_end' and composes it to 'self', given certain conditions are met.
+    // There is the unique path determined by the discrete flow from 'new_end' to 'self.end', and the this method computes the inverse of it.
+    // Note that computing the reverse flow is both simpler and more efficient than computing the flow because points do not need wait for other points
+    // smaller than them (c.f. 'fn let_end_flow_to').
+    // Furthermore, this method guerantees that the resulting path be a geodesic if 'self' originally is.
+    // This method requires that: 
+    //     (1) 'new_end' have 'N' elements, that
+    //     (2) the elements of 'new_end' be distinct, and that
+    //     (3) each 'new_end[i]' is a child of 'self.end[i]'.
+    // Internal checks on these conditions will not be performed in the method, and because some unsafe code depends on these conditions,
+    // this function is unsafe.
+    pub unsafe fn let_end_reverse_flow_to_unchecked(&mut self, new_end: &SortedArray<N, usize>, graph: &AugmentedGraph) {
+        // 'new_end' must have 'N' elements, but we do not check this in this function.
+        debug_assert!(
+            new_end.len() == N,
+            "The input argument 'new_end' must have 'N' distinct elements, but is does not. new_end={new_end:?}"
+        );
+
+        // The elements of 'new_end' must be distinct, but we do not check this in this function.
+        debug_assert!(
+            new_end.iter().zip(new_end.iter().skip(1)).all(|(a,b)| a<b ),
+            "The input argument 'new_end' must be an array of distinct elements, but it is not: new_end={new_end:?}."
+        );
+
+        // Each 'new_end[i]' must be a child of 'self.end[i]', but we do not check this in this function.
+        debug_assert!(
+            new_end.iter().zip(self.end.iter()).all(|(&a,&b)| graph.is_first_child_of_second(a, b) )
+        );
+
+
+        // The following while-loop succesively updates 'self.end', and 'self.end' will be 'new_end' at last.
+        while &self.end != new_end {
+            let mut elementary_path = SortedArray::<N, [usize; 2]>::new();
+
+            // 'next_end' will be 'curr_end' in the next iteration. Its values will be filled in during the following for-loop (one value in each iteration),
+            // and it will thus have length 'N' at the end of the present block. All the unsafe block that contains 'push_unchecked()' in the for-loop is
+            // safe, because it will be called exactly 'N' times and because 'curr_end' is sorted.
+            let mut next_end = SortedArray::new();
+
+
+            // Iterating over points.
+            for (&s, &g) in self.end.iter().zip(new_end.iter()) {
+                // 's' must flow to 'g' if they are not the same.
+                if s == g {
+                    // update 'next_end'
+                    unsafe{ next_end.push_unchecked(s) }; // see the intialization of 'next_end' about the safety of this block.
+                    continue;
+                }
+
+                // Find the vertex that 's' goes to next.
+                let s_next = if graph.essential_vertices.binary_search(&s).is_ok() {
+                    // If 's' is an essential vertex then choose the branch that contains 'g'.
+                    *graph.next_vertices[s].iter().take_while(|next| &s >= next ).last().unwrap()
+                } else {
+                    // If 's' is not an essential vertex, then it can simply go to the vertex 's+1'.
+                    s+1
+                };
+                
+                // update 'next_end'
+                unsafe{ next_end.push_unchecked(s_next) }; // see the intialization of 'next_end' about the safety of this block.
+
+                // Add the step to the 'elementary_path'.
+                // The following unsafe block is safe, because
+                //     (1) this for-loop iterates exactly 'N' times (so this block is called at most 'N' times), and because
+                //     (2) this '[s,s_next]' is always greater than the largest element as 'curr_end' is sorted.
+                unsafe{ elementary_path.push_unchecked([s,s_next])}; 
+            }
+
+            self.path.push( ElementaryCubicPath::new_unchecked(elementary_path) );
+
+            // Note that 'next_end' must have exactly 'N' elements at this point.
+            debug_assert!(
+                next_end.len() == N,
+                "'next_end.len()' must be 'N'={N}, but it is {}",
+                next_end.len()
+            );
+
+            // update 'curr_end'
+            self.end = next_end;
+        }
     }
 
     fn reduce_to_geodesic(self) -> Self {
@@ -666,7 +824,18 @@ impl<const N: usize> CubicPath<N> {
 
 
     // 'fn get_geodesic_between' computes the geodesic between the two (ordered) configurations 'p' and 'q' in the given graph.
-    fn get_geodesic_between([mut p, mut q]: [SortedArray<N, usize>; 2], graph: &AugmentedGraph) -> Self {
+    // This method requires that 'p' and 'q' have exactly 'N' elements and panics if the condition is not met.
+    fn get_geodesic_between([p, q]: [&SortedArray<N, usize>; 2], graph: &AugmentedGraph) -> Self {
+        // check that both 'p' and 'q' have 'N' elements.
+        assert!(
+            p.len() == N,
+            "The input argumet 'p' must have 'N' elements, but it does not: p={p:?}"
+        );
+        assert!(
+            q.len() == N,
+            "The input argumet 'q' must have 'N' elements, but it does not: q={q:?}"
+        );
+
         // 'meets_without_multiplicity' is the meets of points in 'p' and 'q' with mutiplicity reduced.
         let meets_without_multiplicity: SortedArray<N,_> = {
             // Collect the "meets". Note that 'meets' is already sorted because 'p' and 'q' are sorted.
@@ -674,17 +843,17 @@ impl<const N: usize> CubicPath<N> {
             
 
             // Reduce multiplicity of 'meets'.
-            let multiplicity_count = 0;
-            let prev_meet = meets.first().unwrap() + 1; // initial value of 'prev_meet' only needs to be different from 'meets.first().unwrap()'.
+            let mut multiplicity_count = 0;
+            let mut prev_meet = meets.first().unwrap() + 1; // initial value of 'prev_meet' only needs to be different from 'meets.first().unwrap()'.
             for meet in &mut meets {
                 if &prev_meet == meet {
-                    // If 'meet' is not same as the previous 'meet' ('prev_meet'), then substract 'meet' by 'multiplicity_count'.
+                    // If 'meet' is the same as the previous 'meet' ('prev_meet'), then substract 'meet' by 'multiplicity_count'.
                     *meet -= multiplicity_count;
 
                     // update 'multiplicity_count'.
                     multiplicity_count += 1;
                 } else {
-                    // If 'meet' is not same as the previous 'meet' ('prev_meet'), then no change will be made to 'meet'.
+                    // If 'meet' is not the same as the previous 'meet' ('prev_meet'), then no change will be made to 'meet'.
 
                     // reset 'multiplicity_count'.
                     multiplicity_count = 1;
@@ -694,17 +863,72 @@ impl<const N: usize> CubicPath<N> {
                 }
             }
 
-            // At this point, 'meets' is sorted and contains distinct elements.
+            // At this point, 'meets' is sorted and contains 'N' distinct elements.
             debug_assert!(meets.iter().zip(meets.iter().skip(1)).all(|(i,j)| i<j ));
+            debug_assert!(meets.len()==N);
 
             // Construct the SortedArray. This does not panic because 'meets' has 'N' elements and is sorted.
-            SortedArray::try_from( meets ).expect("")
+            // The following "try_from()" does not panic because 'meets' is sorted.
+            // The following "err().unwrap()" does not panic because 'meets' has exactly 'N' elements.
+            SortedArray::try_from( meets ).err().unwrap()
         };
 
-        
-        // 'forward_path' is the path from n
-        let forward_path = CubicPath::get_trivial_path_at(meets_without_multiplicity);
+        // Compute the first half of the output path, that is, the path from 'p' to 'meets_without_multiplicity'.
+        // The following unsafe block is safe, because 
+        //     (1) 'meets_without_multiplicity' has 'N' elements, 
+        //     (2) the elements of 'meets_without_multiplicity' are distinct (this is because it is free from multiplicity), and
+        //     (3) each 'p[i]' is a child of 'meets_without_multiplicity[i]'. 
+        let mut first_half = CubicPath::get_trivial_path_at(*p);
+        unsafe {
+            first_half.let_end_flow_to_unchecked(&meets_without_multiplicity, graph)
+        };
 
+
+        // Compute the first half of the output path, that is, the path from 'p' to 'meets_without_multiplicity'.
+        // The following unsafe block is safe, because 
+        //     (1) 'meets_without_multiplicity' has 'N' elements, 
+        //     (2) the elements of 'meets_without_multiplicity' are distinct (this is because it is free from multiplicity), and
+        //     (3) each 'q[i]' is a child of 'meets_without_multiplicity[i]'.
+        let mut second_half = CubicPath::get_trivial_path_at(meets_without_multiplicity);
+        unsafe {
+            second_half.let_end_reverse_flow_to_unchecked(&meets_without_multiplicity, graph)
+        };
+
+
+        // Compose the two paths and return it.
+        first_half.composed_with(second_half)
+
+    }
+
+
+
+    // 'fn extend_by_checked' extends the path 'self' by concatenating a unit path 'path' at the end.
+    // This method requires that the start vertices of 'path' be contained in the end of 'self' and panics if the condition is not met.
+    fn extend_by_checked(&mut self, path: ElementaryCubicPath<N>) {
+        // check that the start vertices of 'path' be contained in the end of 'self'.
+        assert!(
+            path.data.iter().all(|[s,_]| self.end.binary_search(s).is_ok() ),
+            "The start vertices of 'path' is not contained in the end of 'self'."
+        );
+
+        // Now push 'path' to 'self.path', and modify 'self.end'.
+        self.path.push( path );
+        path.act_setwise_unchecked( &mut self.end );
+    }
+
+
+    // 'fn extend_by_unchecked' extends the path 'self' by concatenating a unit path 'path' at the end.
+    // This method requires that the start vertices of 'path' be contained in the end of 'self', but this function does not check the condition.
+    fn extend_by_unchecked(&mut self, path: ElementaryCubicPath<N>) {
+        // The start vertices of 'path' must be contained in the end of 'self'.
+        debug_assert!(
+            path.data.iter().all(|[s,_]| self.end.binary_search(s).is_ok() ),
+            "The start vertices of 'path' is not contained in the end of 'self'."
+        );
+
+        // Now push 'path' to 'self.path', and modify 'self.end'.
+        self.path.push( path );
+        self.act_setwise_unchecked( &mut self.end );
     }
 }
 
@@ -718,14 +942,14 @@ pub struct MorsePath<'a, const N: usize> {
     end: SortedArray<N , usize>,
 
     path: Vec<MorseCube<N>>,
-    graph: &'a RawSimpleGraph,
+    graph: &'a AugmentedGraph<'a>,
 }
 
 impl<'a, const N: usize> MorsePath<'a, N> {
 
     // 'fn new' creates a new "MorsePath" object from the two input arguments.
-    // The input arguments must be the sorted array of 'N' distinc elements, and this function panics if these condition are not met. 
-    pub fn new(start: SortedArray<N, usize>, end: SortedArray<N, usize>, graph: &'a RawSimpleGraph) -> Self {
+    // The input arguments must be a sorted array of 'N' distinct elements, and this function panics if these conditions are not met. 
+    pub fn new(start: SortedArray<N, usize>, end: SortedArray<N, usize>, graph: &'a AugmentedGraph) -> Self {
         // check that 'start' has 'N' elements.
         assert!(
             start.len() == N,
@@ -769,26 +993,23 @@ impl<'a, const N: usize> MorsePath<'a, N> {
     }
 
 
+    // 'fn get_geodesic' computes the geodesic of the path described by the morse path 'self'.
     pub fn get_geodesic(&'a self) -> CubicPath<N> {
-        let start_path = {
-            let mut path = VecDeque::new();
-            get_edge_path_recc::<N, true>(&self.start, &mut path, self.graph);
-            let path: Vec<_> = path.into();
-            CubicPath{ path, start: self.start, end: base }
-        };
+        self.path.iter()
+            .fold(
+                CubicPath::get_trivial_path_at(self.start) , 
+                |accum, cube| {
+                    let start = accum.end;
+                    let (critical_path, [end, _]) = cube.get_critical_path_and_its_ends();
+                    accum.composed_with(CubicPath::get_geodesic_between([&start, &end], self.graph));
 
-        let end_path = {
-            let mut path = VecDeque::new();
-            // because 'self.end' is in general not sorted, we have to sort it in order to run 'get_edge_path_recc()'.
-            let mut end = self.end; end.sort();
-            let base = get_edge_path_recc::<N, false>(&end, &mut path, self.graph);
-            let path: Vec<_> = path.into();
-            CubicPath{ path, start: base, end }
-        };
+                    accum.extend_by(critical_path);
 
-        self.path.iter().map(|cell| cell.get_edge_path(self.graph) )
-            .chain(std::iter::once(end_path))
-            .fold( start_path, |accum, x| accum.composed_with(x) )
+                    // return
+                    accum
+                } 
+            )
+            .composed_with(other);
     }
 }
 

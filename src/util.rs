@@ -69,18 +69,27 @@ impl<const N: usize, const M: usize, T: Ord + Copy + fmt::Debug> From<[T; M]> fo
 }
 
 
-impl<const N: usize, T: Ord + Copy + fmt::Debug> TryFrom<Vec<T>> for SortedArray<N, T> {
+impl<const N: usize, T: Ord + Copy> TryFrom<Vec<T>> for SortedArray<N, T> {
     type Error = Self;
     // if 'value.len() > N', then this function creates an array of 'N' elements that contains first 'N' elements of 'value',
-    // and encloses it in 'Err'
-    // This method will also panic is the iterator is not sorted.
+    // and encloses it in 'Err'.
+    // This method will PANIC if the furst 'N' elements of the input array is not sorted.
     fn try_from(mut value: Vec<T>) -> Result<Self, Self::Error> {
-        value.sort();
+        // check that the first 'N' elements of the input is sorted.
+        assert!( 
+            value.iter().take(N-1).zip( value.iter().skip(1) ).all(|(a,b)| a <= b ),
+            "The first 'N' values of the input Vec is not sorted."
+        );
+
         let is_error = value.len() > N;
         let mut out = Self::new();
         for x in value.into_iter().take(N) {
-            out.push(x);
+            // create the SortedArray. Because the iterator iterates over at most 'N' times and because the array is verified to be 
+            // sorted, the following unsafe block is safe.
+            unsafe{ out.push_unchecked(x); }
         }
+
+        // Return
         if is_error {
             Err(out)
         } else {
@@ -224,6 +233,44 @@ impl<const N: usize, T: Ord + Copy> SortedArray<N,T> {
 
 
         self.data
+    }
+
+
+    // 'fn modify' overrites the value of 'self' at 'idx' and insert 'T'.
+    // Thus this function is the same as 'remove(idx)' then 'insert(val)'.
+    // This method panics if the index is not valid.
+    pub fn modify(&mut self, mut idx: usize, val: T) {
+        // check on the index 'idx'.
+        assert!(
+            idx < self.len(),
+            "Index out of bounds: the array has size {}, but idx={idx}",
+            self.len()
+        );
+
+        // 'new_idx' is the index of 'self' that 'val' has to be placed. 
+        let new_idx = match self.binary_search(&val) {
+            Ok(new_idx) => new_idx,
+            Err(new_idx) => if new_idx > idx {
+                    new_idx - 1
+                } else {
+                    new_idx
+                },
+        };
+
+        // successively move the element to it neighbor so that 'new_idx' will be empty.
+        // Note that only one of the following while-loops are acrually used.
+        while new_idx > idx {
+            self[idx] = self[idx+1];
+            idx+=1;
+        }
+        while new_idx < idx {
+            self[idx] = self[idx-1];
+            idx-=1;
+        }
+
+        self[idx] = val;
+
+        debug_assert!(self.iter().zip(self.iter().skip(1)).all(|(a,b)| a <= b ));
     }
 }
 
