@@ -322,7 +322,7 @@ pub fn draw_edge_path<const N: usize>(path: &CubicPath<N>, bin_name: &str, graph
 
     let end = path.end;
 
-    let mut pos = start;
+    let pos = start;
     
     let panels = vis_root.split_evenly((1, 3));
 
@@ -377,10 +377,8 @@ pub fn draw_edge_path<const N: usize>(path: &CubicPath<N>, bin_name: &str, graph
         vis_root.present()?;
     }
 
-    for motion in path.iter() {
+    for pos in path {
         panels[1].fill(&WHITE)?;
-
-        motion.act_on(&mut pos);
 
         let mut graphic = ChartBuilder::on(&panels[1])
         .margin(1)

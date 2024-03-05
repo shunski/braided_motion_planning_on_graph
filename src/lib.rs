@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fmt::Debug, usize};
+use std::{collections::VecDeque, fmt::Debug, slice, usize};
 
 use augmented_graph::AugmentedGraph;
 use topo_spaces::graph::RawSimpleGraph;
@@ -9,7 +9,7 @@ use std::ops;
 
 pub mod graph_collection;
 pub mod graphics;
-pub mod search;
+// pub mod search;
 pub mod operators;
 pub mod augmented_graph;
 pub mod util;
@@ -275,6 +275,32 @@ impl<const N: usize> ElementaryCubicPath<N> {
         }
     }
 
+
+    // 'fn act_setwise_checked()' takes in the mutable reference 'p' of distinct sorted points and moves it 
+    // by the action of the path 'self' while keeping it sorted. This method requires that;
+    //     (1) 'p' be a set of DISTINCT points, and that
+    //     (2) 'self[..][0]' be contained in 'p'.
+    // it these conditions are not met, then this method panics. 
+    fn act_setwise_checked(&self, p: &mut SortedArray<N, usize>) {
+        // Check that 'p' is an array of distinct points.
+        assert!(
+            p.iter().zip( p.iter().skip(1) ).all(|(&a, &b)| a < b ),
+            "'p' must be an array of distinct points, but it is not: p={p:?}."
+        );
+
+        // Check that 'self.start' is contained in 'p'..
+        assert!(
+            self.data.iter().all(|[s,_]| p.binary_search(&s).is_ok() ),
+            "self={self:?}, p={p:?}"
+        );
+
+
+        for [s,g] in self.data.iter() {
+            let s_idx = p.binary_search(&s).ok().unwrap();
+            p.modify(s_idx, *g);
+        }
+    }
+
     // 'fn act_setwise_unchecked()' takes in the mutable reference 'p' of distinct sorted points and moves it 
     // by the action of the path 'self' while keeping it sorted. This method requires that;
     //     (1) 'p' be a set of DISTINCT points, and that
@@ -321,23 +347,60 @@ pub struct CubicPath<const N: usize> {
     // 'end' is set-wise the same as 'self.act_on(&mut [usize, N]::try_from( start_usize ))'.
 }
 
-impl<const N: usize> ops::Deref for CubicPath<N> {
-    type Target = Vec<ElementaryCubicPath<N>>;
-    fn deref(&self) -> &Self::Target {
-        &self.path
-    }
-}
-
 impl<const N: usize> Debug for CubicPath<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "start = {:?}\n", self.start)?;
         write!(f, "end = {:?}\n", self.end)?;
-        for p in self.iter() {
+        for p in &self.path {
             write!(f, "{p:?}\n")?;
         }
         write!(f, "")
     }
 }
+
+
+impl<'a, const N: usize> IntoIterator for &'a CubicPath<N> {
+    type Item = SortedArray<N, usize>;
+    type IntoIter = PathIter<'a, N>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        PathIter {
+            curr: self.start,
+            path: self.path.iter(),
+            is_first_iter: true,
+        }
+    }
+}
+
+
+pub struct PathIter<'a, const N: usize> {
+    curr: SortedArray<N, usize>,
+    path: slice::Iter<'a, ElementaryCubicPath<N>>,
+    is_first_iter: bool,
+}
+
+
+impl<'a, const N: usize> Iterator for PathIter<'a, N> {
+    type Item = SortedArray<N, usize>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_first_iter {
+            self.is_first_iter = false;
+
+            // return the first step.
+            // Note that the 'PathIter' cannot be empty. (Any path, including the trivial path, has at least the starting point.)
+            return Some(self.curr)
+        }
+
+        if let Some(p) = self.path.next() {
+            p.act_setwise_checked( &mut self.curr );
+            Some(self.curr)
+        } else {
+            None
+        }
+    }
+}
+
 
 impl<const N: usize> CubicPath<N> {
     // 'fn new_unchecked' creates a new "CubicPath" object from the two input arguments without checking them.
@@ -380,7 +443,7 @@ impl<const N: usize> CubicPath<N> {
         debug_assert!(
             {
                 let mut start: [usize; N] = start.as_array();
-                for p in path { p.act_unchecked(&mut start); }
+                for p in &path { p.act_unchecked(&mut start); }
                 start.sort();
                 SortedArray::<N, usize>::from(start) == end
             }
@@ -430,7 +493,7 @@ impl<const N: usize> CubicPath<N> {
         debug_assert!(
             {
                 let mut start: [usize; N] = start.as_array();
-                for p in path { p.act_unchecked(&mut start); }
+                for p in &path { p.act_unchecked(&mut start); }
                 start.sort();
                 SortedArray::<N, usize>::from(start) == end
             }
@@ -469,7 +532,7 @@ impl<const N: usize> CubicPath<N> {
     pub fn act(&self, p: &mut [usize; N]) {
         // check that the input argument be a set of distinct (but not necessarily sorted) points.
         assert!( {
-                let mut p = p;
+                let mut p = *p;
                 p.sort();
                 p.iter().zip(p.iter().skip(1)).all(|(a,b)| a < b)
             },
@@ -477,7 +540,7 @@ impl<const N: usize> CubicPath<N> {
             p 
         );
 
-        for e in self.iter() {
+        for e in &self.path {
             // Note that having checked the condition above, the requirement for "fn ElementaryCubicPath::act_unchecked" 
             // is satisfied at each iteration.
             e.act_unchecked(p);
@@ -489,7 +552,7 @@ impl<const N: usize> CubicPath<N> {
     pub fn act_unchecked(&self, p: &mut [usize; N]) {
         // the input argument must be a set of distinct (but not necessarily sorted) points, we do not check this.
         debug_assert!( {
-                let mut p = p;
+                let mut p = *p;
                 p.sort();
                 p.iter().zip(p.iter().skip(1)).all(|(a,b)| a < b)
             },
@@ -497,7 +560,7 @@ impl<const N: usize> CubicPath<N> {
             p 
         );
 
-        for e in self.iter() {
+        for e in &self.path {
             // Note that having checked the condition above, the requirement for "fn ElementaryCubicPath::act_unchecked" 
             // is satisfied at each iteration.
             e.act_unchecked(p);
@@ -520,7 +583,7 @@ impl<const N: usize> CubicPath<N> {
     }
 
 
-    // 'fn let_end_flow_to' computes the path from 'self.end' to 'new_end' and compose it to 'self', given the certain conditions.
+    // 'fn let_end_flow_to' computes the path from 'self.end' to 'new_end' and composes it to 'self', given the certain conditions.
     // This method guerantees that the resulting path be a geodesic if 'self' originally is.
     // This method requires that: 
     //     (1) 'new_end' have 'N' elements, that
@@ -905,32 +968,62 @@ impl<const N: usize> CubicPath<N> {
     // 'fn extend_by_checked' extends the path 'self' by concatenating a unit path 'path' at the end.
     // This method requires that the start vertices of 'path' be contained in the end of 'self' and panics if the condition is not met.
     fn extend_by_checked(&mut self, path: ElementaryCubicPath<N>) {
-        // check that the start vertices of 'path' be contained in the end of 'self'.
+        // check that the start vertices of 'path' are contained in the end of 'self'.
         assert!(
             path.data.iter().all(|[s,_]| self.end.binary_search(s).is_ok() ),
             "The start vertices of 'path' is not contained in the end of 'self'."
         );
 
         // Now push 'path' to 'self.path', and modify 'self.end'.
-        self.path.push( path );
         path.act_setwise_unchecked( &mut self.end );
+        self.path.push( path );
     }
 
 
     // 'fn extend_by_unchecked' extends the path 'self' by concatenating a unit path 'path' at the end.
     // This method requires that the start vertices of 'path' be contained in the end of 'self', but this function does not check the condition.
     fn extend_by_unchecked(&mut self, path: ElementaryCubicPath<N>) {
-        // The start vertices of 'path' must be contained in the end of 'self'.
+        // The start vertices of 'path' must are contained in the end of 'self'.
         debug_assert!(
             path.data.iter().all(|[s,_]| self.end.binary_search(s).is_ok() ),
             "The start vertices of 'path' is not contained in the end of 'self'."
         );
 
         // Now push 'path' to 'self.path', and modify 'self.end'.
+        path.act_setwise_unchecked( &mut self.end );
         self.path.push( path );
-        self.act_setwise_unchecked( &mut self.end );
     }
 }
+
+
+
+
+#[cfg(test)]
+mod cubic_path_test {
+    // 'N' is the number of robots
+    const N: usize = 5;
+
+    use crate::{ augmented_graph::AugmentedGraph, graph_collection, graphics, util::SortedArray, CubicPath };
+    
+    #[test]
+    fn let_flow() -> Result<(), Box<dyn std::error::Error>> {
+        let (graph, embedding, name) = graph_collection::RawGraphCollection::Grid.get();
+        
+        let start = SortedArray::from([11, 26, 51, 110, 132]);
+        let end = SortedArray::from([3, 17, 18, 50, 120]);
+        let mut path = CubicPath::get_trivial_path_at(start);
+        path.let_end_flow_to(&end, &AugmentedGraph::from(&graph));
+
+        // draw the generated path
+        println!("drawing the path...");
+        graphics::draw_edge_path::<N>(&path, &"cubic_path_let_flow_test", &name, &embedding, &graph)?;
+
+        Ok(())
+    }
+}
+
+
+
 
 pub struct MorsePath<'a, const N: usize> {
     // 'start' is the start configuration of the path.
@@ -995,21 +1088,31 @@ impl<'a, const N: usize> MorsePath<'a, N> {
 
     // 'fn get_geodesic' computes the geodesic of the path described by the morse path 'self'.
     pub fn get_geodesic(&'a self) -> CubicPath<N> {
-        self.path.iter()
+        if self.path.is_empty() {
+            // if the morse path is empty, then the geodesic is simply the order-respecting geodesic in the tree.
+            return CubicPath::get_geodesic_between([&self.start, &self.end], self.graph);
+        };
+
+
+        // collect the geodesic starting from the trivial path at 'self.start'.
+        let tmp = self.path.iter()
             .fold(
                 CubicPath::get_trivial_path_at(self.start) , 
                 |accum, cube| {
                     let start = accum.end;
                     let (critical_path, [end, _]) = cube.get_critical_path_and_its_ends();
-                    accum.composed_with(CubicPath::get_geodesic_between([&start, &end], self.graph));
+                    let mut accum = accum.composed_with(CubicPath::get_geodesic_between([&start, &end], self.graph));
 
-                    accum.extend_by(critical_path);
+                    accum.extend_by_unchecked(critical_path);
 
                     // return
                     accum
                 } 
-            )
-            .composed_with(other);
+            );
+
+        // Finally extend the path so that the path ends at 'self.end'.
+        let end = tmp.end;
+        tmp.composed_with( CubicPath::get_geodesic_between([&end, &self.end], self.graph) )
     }
 }
 
@@ -1018,8 +1121,9 @@ impl<'a, const N: usize> MorsePath<'a, N> {
 mod morse_path_test {
     // 'N' is the number of robots
     const N: usize = 5;
-    use crate::{ graph_collection, graphics, MorsePath, MorseCube, util::SortedArray };
 
+    use crate::{ augmented_graph::AugmentedGraph, graph_collection, graphics, util::SortedArray, MorseCube, MorsePath };
+    
     // #[test]
     fn morse_path() -> Result<(), Box<dyn std::error::Error>> {
         let (graph, embedding, name) = graph_collection::RawGraphCollection::Grid.get();
@@ -1027,20 +1131,23 @@ mod morse_path_test {
         let cube1 = {
             let edges = SortedArray::from([[70,105]]);
             let vertices = SortedArray::from([71,72,74,75]);
-            MorseCube::<N>::new_unchecked(edges, vertices)
+            MorseCube::<N>::new_checked(edges, vertices)
         };
-        cube1.is_valid(&graph);
 
         let cube2 = {
             let edges = SortedArray::from([[88,123]]);
             let vertices = SortedArray::<N, usize>::from([89,90,92,93]);
-            MorseCube::<N>::new_unchecked(edges, vertices)
+            MorseCube::<N>::new_checked(edges, vertices)
         };
-        cube2.is_valid(&graph);
         
-        let start = [11, 26, 56, 67, 132];
-        let end = [3, 17, 100, 110, 120];
-        let morse_path = MorsePath{ start, end, path: vec![cube1, cube2], graph: &graph };
+        let start = SortedArray::from([11, 26, 56, 67, 132]);
+        let end = SortedArray::from([3, 17, 100, 110, 120]);
+        let morse_path = MorsePath{ 
+            start, end, 
+            path: vec![cube1, cube2], 
+            graph: &AugmentedGraph::from(&graph) 
+        };
+
 
         let path = morse_path.get_geodesic();
 

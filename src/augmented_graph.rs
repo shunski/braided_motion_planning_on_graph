@@ -23,12 +23,13 @@ fn get_next_vertices(essential_vertex: usize, graph: &RawSimpleGraph) -> Vec<usi
         .collect::<Vec<_>>()
 }
 
-struct UsizeIndexable<T>(Vec<(usize, T)>);
+
+pub struct UsizeIndexable<T>(Vec<(usize, T)>);
 
 impl<T> std::ops::Index<usize> for UsizeIndexable<T> {
     type Output = T;
     fn index(&self, index: usize) -> &Self::Output {
-        &self.0[self.0.binary_search_by_key(&index, |&(i,_)| i ).unwrap()].1
+        &self.0[self.0.binary_search_by_key(&index, |&(i,_)| i ).expect("input vertex is not an essential vertex")].1
     }
 }
 
@@ -38,7 +39,7 @@ pub struct AugmentedGraph<'a> {
     pub graph_ref: &'a RawSimpleGraph,
 
 
-    //
+    // 
     pub next_essential_vertices: UsizeIndexable<Vec<usize>>,
     
 
@@ -73,7 +74,7 @@ impl<'a> AugmentedGraph<'a> {
             graph_ref,
             next_essential_vertices: Self::get_next_essential_vertices_dictionary(graph_ref, &essential_vertices),
             next_vertices: Self::get_next_vertices_dictionary(graph_ref, &essential_vertices),
-            parent: Self::get_parent(&essential_vertices),
+            parent: Self::get_parent(graph_ref, &essential_vertices),
             essential_vertices,
         }
     }
@@ -125,7 +126,7 @@ impl<'a> AugmentedGraph<'a> {
 
     // 'fn is_first_child_of_second' determines whether the first input ('v') is the child of the second input ('w').
     // A vertex 'v' is a "child" of a vertex 'w' if 'v'<'w' and 'v' is the smallest vertex contained in the geodesic between them in the tree.
-    pub fn is_first_child_of_second(&self, mut v: usize, w: usize) -> bool {
+    pub fn is_first_child_of_second(&self, v: usize, w: usize) -> bool {
         // if 'v' is a child of 'w', then 'v' > 'w'.
         if v <= w {
             return false;
@@ -133,8 +134,8 @@ impl<'a> AugmentedGraph<'a> {
 
         // 'x' is the smallest essential vertex greater than or equal to 'w'.
         let x = match self.essential_vertices.binary_search(&w) {
-            Ok(idx) => idx,
-            Err(idx) => idx,
+            Ok(idx) => self.essential_vertices[idx],
+            Err(idx) => self.essential_vertices[idx],
         };
 
         // If the geodesic between 'v' and 'w' does not contain any essential vertex, then 'v' is a child of 'w'. 
@@ -145,10 +146,10 @@ impl<'a> AugmentedGraph<'a> {
         // Now 'v' >= max{ 'w', 'x' }.
         let parent = self.parent[x];
 
-        // 'sup_of_children' is such that a vertex 'y' is contained in the range ('v'..'sup_of_children') iff 'y' is the child of 'v'.
+        // 'sup_of_children' is the vertex such that a vertex 'y' is contained in the range ('v'..'sup_of_children') iff 'y' is the child of 'v'.
         let sup_of_children = match self.next_vertices[parent].binary_search(&x) {
 
-            // 'Ok(_)' means 'x' and its parent is adjacent (which rarelly happens because both are essential).
+            // 'Ok(_)' means 'x' and its parent are adjacent (which rarelly happens because both are essential).
             // In this case, we have to choose 'sup_of_childs' to be 'self.next_vertices[parent][idx+1]'. If such choice is not possible,
             // then choose 'usize::MAX'
             Ok(idx) => if idx+1 < self.n_vertices() {
@@ -193,7 +194,7 @@ impl<'a> AugmentedGraph<'a> {
             .collect::<Vec<_>>()
     }
 
-    fn get_parent(essential_vertices: &[usize]) -> UsizeIndexable<usize> {
+    fn get_parent(graph: &RawSimpleGraph, essential_vertices: &[usize]) -> UsizeIndexable<usize> {
         // Just making sure that 'essential_vertices' is sorted...
         assert!(
             essential_vertices.iter().zip(&essential_vertices[1..]).all(|(v, w)| v < w ),
@@ -202,8 +203,23 @@ impl<'a> AugmentedGraph<'a> {
 
         let out = essential_vertices.iter()
             .skip(1) // skip the first vertex, which does not have a parent.
-            .map(|&v| (v, *essential_vertices.iter().take_while(|&&w| w<v).last().unwrap()) )
+            .map(|&v| {
+                // compute the parent 'parent' of 'v'.
+                let mut parent = v;
+                while essential_vertices.binary_search(&parent).is_err() {
+                    if graph.contains(parent-1, parent) {
+                        // If 'parent-1' is a non-essential vertex, then flow to it. 
+                        parent -= 1;
+                    } else {
+                        // Otherwise, 'parent' is connected to an essential vertex, so find that essential vertex.
+                        parent = *essential_vertices.iter().find(|&&w| graph.contains(w, parent) ).unwrap();
+                        break;
+                    }
+                }
+                (v, parent)
+            } )
             .collect::<Vec<_>>();
+
         UsizeIndexable(out)
     }
 }

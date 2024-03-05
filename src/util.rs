@@ -74,7 +74,7 @@ impl<const N: usize, T: Ord + Copy> TryFrom<Vec<T>> for SortedArray<N, T> {
     // if 'value.len() > N', then this function creates an array of 'N' elements that contains first 'N' elements of 'value',
     // and encloses it in 'Err'.
     // This method will PANIC if the furst 'N' elements of the input array is not sorted.
-    fn try_from(mut value: Vec<T>) -> Result<Self, Self::Error> {
+    fn try_from(value: Vec<T>) -> Result<Self, Self::Error> {
         // check that the first 'N' elements of the input is sorted.
         assert!( 
             value.iter().take(N-1).zip( value.iter().skip(1) ).all(|(a,b)| a <= b ),
@@ -192,7 +192,7 @@ impl<const N: usize, T: Ord + Copy> SortedArray<N,T> {
 
         let out = self[idx];
         for i in idx..self.len-1 {
-            self[i] = self[i+1]; 
+            self.data[i] = self[i+1]; 
         }
 
         self.len -= 1;
@@ -236,9 +236,9 @@ impl<const N: usize, T: Ord + Copy> SortedArray<N,T> {
     }
 
 
-    // 'fn modify' overrites the value of 'self' at 'idx' and insert 'T'.
-    // Thus this function is the same as 'remove(idx)' then 'insert(val)'.
-    // This method panics if the index is not valid.
+    /// 'fn modify' overrites the value of 'self' at 'idx' and insert 'T'.
+    /// Thus this function is the same as 'remove(idx)' then 'insert(val)'.
+    /// This method panics if the index is not valid.
     pub fn modify(&mut self, mut idx: usize, val: T) {
         // check on the index 'idx'.
         assert!(
@@ -260,15 +260,15 @@ impl<const N: usize, T: Ord + Copy> SortedArray<N,T> {
         // successively move the element to it neighbor so that 'new_idx' will be empty.
         // Note that only one of the following while-loops are acrually used.
         while new_idx > idx {
-            self[idx] = self[idx+1];
+            self.data[idx] = self[idx+1];
             idx+=1;
         }
         while new_idx < idx {
-            self[idx] = self[idx-1];
+            self.data[idx] = self[idx-1];
             idx-=1;
         }
 
-        self[idx] = val;
+        self.data[idx] = val;
 
         debug_assert!(self.iter().zip(self.iter().skip(1)).all(|(a,b)| a <= b ));
     }
@@ -429,7 +429,7 @@ pub fn push<'a, const FORWARD: bool, const UPWARD: bool, const N: usize>(
     // create the motion
     let vertices: SortedArray<N, usize> = points.iter()
         .map(|p| p.curr_pos::<FORWARD>() )
-        .filter(|&s| s!=points[idx].curr_pos())
+        .filter(|&s| s!=points[idx].curr_pos::<FORWARD>())
         .collect::<Vec<_>>()
         .try_into().unwrap();
     debug_assert!(vertices.len() == N-1);
